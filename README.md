@@ -73,3 +73,21 @@ They cover import/deduplication, playlist changes, saved-session restoration,
 failed writes, picker lifetimes, and deletion. Offline tests serve the full module
 set without network access. Physical-phone playback and browser storage policies
 still require device testing.
+
+## Touch controls (SQ-002 and interaction follow-ups)
+
+- Swipe up on the bottom player to expand it; swipe down on the full player's top bar to return.
+- Swipe left on either player for next, right for previous (without restarting the current track).
+- Swipe right on a song row to append it to the queue; the row highlights when the threshold is reached.
+- Hold a song or playlist for 500 ms to open its options. Moving more than 12 px cancels the hold; vertical list scrolling stays native. Mouse right-click and Shift+F10 open the same menu, and visible options buttons remain available.
+- Playlist options include rename, add songs, move up/down, export, and details. Song options include local metadata editing, queue/playlist actions, and file information.
+
+`gestures.js` owns gesture recognition and delegates actions to existing modules.
+Sliders are excluded. Canceled/multi-touch gestures do not execute actions, and
+completed gestures consume their synthetic click. Automated tests cover those
+boundaries; physical iOS/Android touch behavior still needs device testing.
+
+Playlists now appear above songs in the library. Their custom order is saved in
+an optional `playlistOrder` setting; existing databases need no migration. Song
+detail edits affect local catalog records only, never the original file or saved
+audio bytes. The specified empty-library help cards and sidebar copy are removed.

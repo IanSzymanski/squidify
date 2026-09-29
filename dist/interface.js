@@ -1,3 +1,4 @@
+import { bindGestures } from './gestures.js';
 import * as db from './storage.js';
 import { formatTime, formatBytes, escapeHTML as esc } from './core.js';
 import { icon, mark } from './icons.js';
@@ -83,7 +84,7 @@ export function createInterface(context) {
   }
   function renderSidebar() {
     $('#likedCount').textContent = trackArray().filter(t=>t.liked).length;
-    $('#sidebarPlaylists').innerHTML = state.playlists.length ? state.playlists.map(p=>`<button class="sidebar-playlist ${state.view==='playlist'&&state.detail===p.id?'active':''}" data-view="playlist" data-id="${esc(p.id)}">${collectionArt(p)}<span><strong>${esc(p.name)}</strong><small>${plural(p.trackIds.length,'song')}</small></span></button>`).join('') : '<p class="sidebar-empty">A place for every mood.<br>Create your first playlist.</p>';
+    $('#sidebarPlaylists').innerHTML = state.playlists.length ? state.playlists.map(p=>`<button class="sidebar-playlist ${state.view==='playlist'&&state.detail===p.id?'active':''}" data-view="playlist" data-playlist-id="${esc(p.id)}" data-id="${esc(p.id)}">${collectionArt(p)}<span><strong>${esc(p.name)}</strong><small>${plural(p.trackIds.length,'song')}</small></span></button>`).join('') : '';
     $$('[data-view]').forEach(el=> { const selected = !state.search && el.dataset.view === state.view && (!el.dataset.id || el.dataset.id === state.detail); el.classList.toggle('active',selected); if(selected)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current'); });
   }
   function header(title,meta,eyebrow='ON THIS DEVICE', action='add-music',label='Add music') {
@@ -96,12 +97,26 @@ export function createInterface(context) {
     return `<table class="track-table"><thead><tr><th class="num">#</th><th class="title-col">Title</th><th class="album-col">Album</th><th class="like-col"><span class="sr-only">Liked</span></th><th class="duration-col" aria-label="Duration">${icon('clock')}</th><th class="more-col"><span class="sr-only">Actions</span></th></tr></thead><tbody>${list.map((t,i)=>`<tr data-track-row="${t.id}" class="${state.queue.current===t.id?'current':''}"><td class="number-cell"><button class="number-button" data-action="play-track" data-id="${t.id}" aria-label="Play ${esc(t.title)}">${state.queue.current===t.id?icon(!audio.paused?'pause':'play'):i+1}</button></td><td><button class="track-cell" data-action="play-track" data-id="${t.id}">${artwork(t)}<span class="track-text"><span class="song-title">${esc(t.title)}</span><span class="song-artist">${esc(t.artist)}</span></span></button></td><td class="album-cell"><button class="album-text" data-view="album" data-id="${esc(albumKey(t))}">${esc(t.album)}</button></td><td class="table-like"><button class="icon-button like-button ${t.liked?'liked':''}" data-action="like" data-id="${t.id}" aria-label="${t.liked?'Unlike':'Like'} ${esc(t.title)}" aria-pressed="${!!t.liked}">${icon('heart')}</button></td><td class="duration-cell" data-duration-id="${t.id}">${formatTime(t.duration)}</td><td><button class="icon-button" data-action="track-menu" data-id="${t.id}" aria-label="Actions for ${esc(t.title)}">${icon('more')}</button></td></tr>`).join('')}</tbody></table>`;
   }
   function emptyLibrary() {
-    return `<section class="empty-library"><div class="empty-icon">${icon('folder')}</div><h2>Your music belongs here.</h2><p>Connect a folder or choose audio files to start your own offline library.</p><div class="actions-row"><button class="button primary" data-action="choose-folder">${icon('folder')}Choose a folder</button><button class="button" data-action="choose-files">${icon('plus')}Choose files</button></div><p class="empty-footer">${icon('shield')}Music stays on your device. No uploads. No account for your music.</p></section><div class="help-grid"><div class="help-item">${icon('download')}<div><h3>Take it offline</h3><p>Imported songs are saved on this device, ready when the connection isn’t.</p></div></div><div class="help-item">${icon('shuffle')}<div><h3>A better kind of shuffle</h3><p>No repeats in a cycle. More space between the same artists.</p></div></div><div class="help-item">${icon('plus')}<div><h3>Keep it on your Home Screen</h3><p>Install Squidify, then add your music inside the installed app.</p><button data-view="settings">How to install</button></div></div></div>`;
+    return `<section class="empty-library"><div class="empty-icon">${icon('folder')}</div><h2>Your music belongs here.</h2><p>Connect a folder or choose audio files to start your own offline library.</p><div class="actions-row"><button class="button primary" data-action="choose-folder">${icon('folder')}Choose a folder</button><button class="button" data-action="choose-files">${icon('plus')}Choose files</button></div><p class="empty-footer">${icon('shield')}Music stays on your device. No uploads. No account for your music.</p></section>`;
+  }
+  function playlistTiles() {
+    return state.playlists.map(p=>`<div class="playlist-tile" data-playlist-id="${esc(p.id)}"><button class="collection-card" data-view="playlist" data-id="${esc(p.id)}">${collectionArt(p)}<strong>${esc(p.name)}</strong><small>${plural(p.trackIds.length,'song')}</small></button><button class="icon-button tile-menu" data-action="playlist-menu" data-id="${esc(p.id)}" aria-label="Options for ${esc(p.name)}">${icon('more')}</button></div>`).join('');
+  }
+  function positionMenu(anchor) {
+    if (!anchor?.getBoundingClientRect) return;
+    const rect=anchor.getBoundingClientRect();
+    modal.classList.add('context-menu');
+    const width=Math.min(350,window.innerWidth-24);
+    modal.style.setProperty('width',`${width}px`);
+    modal.style.setProperty('left',`${Math.max(12,Math.min(rect.left,window.innerWidth-width-12))}px`);
+    const height=modal.getBoundingClientRect().height;
+    modal.style.setProperty('top',`${Math.max(12,Math.min(rect.bottom+6,window.innerHeight-height-12))}px`);
   }
   function renderLibrary() {
     const list=currentList(), allCount=state.tracks.size;
     const searching=!!state.search;
     let html=header(searching?'Search results':'Your library',searching?`<span>${plural(list.length,'song')} found</span>`:`<span>${plural(allCount,'song')}</span><span>${formatBytes(trackArray().reduce((s,t)=>s+t.size,0))}</span>`,searching?'YOUR MUSIC':'ON THIS DEVICE');
+    if(!searching)html+=`<section class="library-playlists" aria-labelledby="libraryPlaylistsTitle"><div class="section-heading"><h2 id="libraryPlaylistsTitle">Playlists</h2><button class="icon-button" data-action="new-playlist" aria-label="Create playlist">${icon('plus')}</button></div><div class="grid">${playlistTiles()}</div></section>`;
     html+=`<div class="toolbar"><div class="pills"><button class="pill ${state.tab==='songs'||searching?'active':''}" data-action="tab" data-tab="songs">Songs</button>${!searching?`<button class="pill ${state.tab==='albums'?'active':''}" data-action="tab" data-tab="albums">Albums</button>`:''}</div>${list.length?sortControl():''}</div>`;
     if(!allCount) return html+emptyLibrary();
     if(!list.length) return html+'<div class="empty-small"><h2>No songs found</h2><p>Try another title, artist, album, or filename.</p></div>';
@@ -122,7 +137,7 @@ export function createInterface(context) {
     return html+`<div class="empty-small"><h2>${isLiked?'Keep your favorites close.':'Make it your own.'}</h2><p>${isLiked?'Tap the heart on any song to save it here.':'Add songs from your library to this playlist.'}</p><button class="button ${p?'primary':'quiet'}" ${p?`data-action="edit-playlist-tracks" data-id="${p.id}"`:'data-view="library"'}>${p?'Add songs':'Browse your library'}</button></div>`;
   }
   function renderPlaylists() {
-    return header('Your playlists',`<span>${plural(state.playlists.length,'playlist')}</span>`,'MADE BY YOU','new-playlist','Create playlist')+`<div class="grid">${state.playlists.map(p=>`<button class="collection-card" data-view="playlist" data-id="${p.id}">${collectionArt(p)}<strong>${esc(p.name)}</strong><small>${plural(p.trackIds.length,'song')}</small></button>`).join('')}<button class="collection-card new-card" data-action="new-playlist"><span>${icon('plus')}<strong>Create a playlist</strong><small>Give your songs a place.</small></span></button></div>`;
+    return header('Your playlists',`<span>${plural(state.playlists.length,'playlist')}</span>`,'MADE BY YOU','new-playlist','Create playlist')+`<div class="grid">${playlistTiles()}<button class="collection-card new-card" data-action="new-playlist"><span>${icon('plus')}<strong>Create a playlist</strong><small>Give your songs a place.</small></span></button></div>`;
   }
   function renderSettings() {
     const bytes=trackArray().reduce((sum,t)=>sum+t.size,0), info=state.storage;
@@ -141,6 +156,7 @@ export function createInterface(context) {
   function setModal(content, className = '') {
     // Keep the same input nodes alive when switching dialogs.
     $('#fileInputs').append(fileInput,folderInput);
+    modal.removeAttribute('style');
     modal.className=`modal ${className}`; modal.innerHTML=content;
     if(!modal.open)modal.showModal();
   }
@@ -151,10 +167,11 @@ export function createInterface(context) {
     $('#filePickerSlot').append(fileInput);
     if(!('showDirectoryPicker' in window))$('#folderPickerSlot').append(folderInput);
   }
-  function trackMenu(id) {
+  function trackMenu(id, anchor) {
     const t=byId(id);if(!t)return;
     const p=state.view==='playlist'?playlist(state.detail):null;
-    setModal(modalHead('Song options')+`<div class="menu-track">${artwork(t)}<div><span class="song-title">${esc(t.title)}</span><span class="song-artist">${esc(t.artist)}</span></div></div><button class="menu-item" data-action="like" data-id="${id}">${icon('heart')}${t.liked?'Remove from liked songs':'Add to liked songs'}</button><button class="menu-item" data-action="playlist-picker" data-id="${id}">${icon('plus')}Add to playlist</button><button class="menu-item" data-action="play-next" data-id="${id}">${icon('next')}Play next</button><button class="menu-item" data-action="add-queue" data-id="${id}">${icon('queue')}Add to queue</button>${p?`<hr class="menu-separator"><button class="menu-item" data-action="move-playlist-track" data-id="${id}" data-delta="-1" ${p.trackIds.indexOf(id)===0?'disabled':''}>${icon('up')}Move up in playlist</button><button class="menu-item" data-action="move-playlist-track" data-id="${id}" data-delta="1" ${p.trackIds.indexOf(id)===p.trackIds.length-1?'disabled':''}>${icon('down')}Move down in playlist</button><button class="menu-item" data-action="remove-playlist-track" data-id="${id}">${icon('close')}Remove from this playlist</button>`:''}<hr class="menu-separator"><button class="menu-item danger" data-action="confirm-remove-track" data-id="${id}">${icon('trash')}Remove from this device</button><p class="small-note">${esc(t.name)} · ${formatBytes(t.size)}</p>`);
+    setModal(modalHead('Song options')+`<div class="menu-track">${artwork(t)}<div><span class="song-title">${esc(t.title)}</span><span class="song-artist">${esc(t.artist)}</span></div></div><button class="menu-item" data-action="edit-track" data-id="${id}">${icon('edit')}Edit song details</button><button class="menu-item" data-action="like" data-id="${id}">${icon('heart')}${t.liked?'Remove from liked songs':'Add to liked songs'}</button><button class="menu-item" data-action="playlist-picker" data-id="${id}">${icon('plus')}Add to playlist</button><button class="menu-item" data-action="play-next" data-id="${id}">${icon('next')}Play next</button><button class="menu-item" data-action="add-queue" data-id="${id}">${icon('queue')}Add to queue</button>${p?`<hr class="menu-separator"><button class="menu-item" data-action="move-playlist-track" data-id="${id}" data-delta="-1" ${p.trackIds.indexOf(id)===0?'disabled':''}>${icon('up')}Move up in playlist</button><button class="menu-item" data-action="move-playlist-track" data-id="${id}" data-delta="1" ${p.trackIds.indexOf(id)===p.trackIds.length-1?'disabled':''}>${icon('down')}Move down in playlist</button><button class="menu-item" data-action="remove-playlist-track" data-id="${id}">${icon('close')}Remove from this playlist</button>`:''}<hr class="menu-separator"><button class="menu-item danger" data-action="confirm-remove-track" data-id="${id}">${icon('trash')}Remove from this device</button><p class="small-note">${esc(t.album)} · ${formatTime(t.duration)}<br>${esc(t.name)} · ${formatBytes(t.size)}</p>`);
+    positionMenu(anchor);
   }
   function highlightCurrent() {
     $$('[data-track-row]').forEach((row,i)=>{const current=row.dataset.trackRow===state.queue.current;row.classList.toggle('current',current);const button=$('.number-button',row);if(button)button.innerHTML=current?icon(!audio.paused&&!playback.isPriming()?'pause':'play'):i+1;});
@@ -197,6 +214,18 @@ export function createInterface(context) {
   }
 
   function bindEvents(actions) {
+  bindGestures({ document, window, nowDialog,
+    run: (name,id) => {
+      if(name==='gesture-previous')return playback.previousTrack(false);
+      return Promise.resolve(actions[name]?.({dataset:{id}})).catch(report);
+    },
+    openMenu: item => {
+      const id=item.dataset.trackRow||item.dataset.playlistId;
+      const name=item.dataset.trackRow?'track-menu':'playlist-menu';
+      actions[name]({dataset:{id},anchor:item});
+    }
+  });
+  modal.addEventListener('click',event=>{if(event.target===modal){const r=modal.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)modal.close();}});
   document.addEventListener('click',event=>{
     if(event.target===fileInput||event.target===folderInput){
       if(state.busy){event.preventDefault();toast('Finish the current import first.');return;}
@@ -241,7 +270,7 @@ export function createInterface(context) {
   'close-modal':()=>modal.close(),
   'close-now':()=>nowDialog.close(),
   'cancel-import':()=>{state.stopImport=true;},
-  'track-menu':b=>trackMenu(b.dataset.id),
+  'track-menu':b=>trackMenu(b.dataset.id,b.anchor||b),
   'current-menu':()=>{nowDialog.close();trackMenu(state.queue.current);},
   'tab':b=>{state.tab=b.dataset.tab;render();},
   'now-playing':()=>{if(!state.queue.current)return;renderNowPlaying();nowDialog.showModal();},
@@ -254,5 +283,5 @@ export function createInterface(context) {
 
   function artworkURL(t) { if(!t?.artwork)return undefined; if(!artworkURLs.has(t.id))artworkURLs.set(t.id,URL.createObjectURL(t.artwork)); return artworkURLs.get(t.id); }
 
-  return { toast, report, paintIcons, collectionArt, route, readRoute, currentList, contextName, header, render, setModal, modalHead, addMusicDialog, highlightCurrent, renderPlayer, updateProgress, renderNowPlaying, renderQueue, renderOfflineBadge, releaseArtwork, artworkURL, bindEvents, actions };
+  return { toast, report, paintIcons, collectionArt, route, readRoute, currentList, contextName, header, render, setModal, modalHead, positionMenu, addMusicDialog, highlightCurrent, renderPlayer, updateProgress, renderNowPlaying, renderQueue, renderOfflineBadge, releaseArtwork, artworkURL, bindEvents, actions };
 }

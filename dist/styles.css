@@ -10,3 +10,27 @@
 
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.duration-col .icon{margin-left:auto;width:17px;height:17px}
 .native-file-input{display:block;width:100%;max-width:100%;padding:12px;background:#11170d;border:1px solid #4b5840;border-radius:6px;font-size:14px;color:var(--muted);min-height:52px}.native-file-input::file-selector-button{font:inherit;font-weight:650;color:#11170b;background:var(--accent);border:0;border-radius:4px;padding:10px 13px;margin-right:12px;cursor:pointer}
+
+/* Library collections and touch interactions. Sliders keep native dragging. */
+.library-playlists{margin:4px 0 32px}
+.section-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.section-heading h2{font-size:20px;letter-spacing:-.4px;margin:0}
+.library-playlists .grid:empty{display:none}
+.playlist-tile{position:relative;min-width:0;touch-action:pan-y;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.playlist-tile .collection-card{width:100%;height:100%;padding-bottom:45px}
+.tile-menu{position:absolute;right:10px;bottom:5px}
+.sidebar-playlist,[data-track-row]{touch-action:pan-y;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+#player,.now-top{touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+#nowDialog{touch-action:pan-y;overscroll-behavior:contain}
+#player input,#nowDialog input{touch-action:auto}
+[data-track-row].gesture-active,#player.gesture-active,#nowDialog.gesture-active{transition:none!important;will-change:translate}
+[data-track-row].queue-ready{background:#3a5529!important;box-shadow:inset 5px 0 0 var(--accent)}
+[data-track-row].queue-ready .track-text::after{content:'Add to queue';display:block;color:var(--accent);font-size:13px;margin-top:4px}
+.now-top{min-height:56px;position:relative;padding-top:12px}
+.now-top::before{content:'';position:absolute;top:0;left:calc(50% - 18px);width:36px;height:4px;border-radius:4px;background:var(--muted);opacity:.5}
+.modal.context-menu{position:fixed;margin:0;max-height:calc(100dvh - 24px);padding:20px;border-radius:12px;overflow:auto}
+.modal.context-menu::backdrop{background:rgba(0,0,0,.24)}
+.menu-info{font-size:14px;color:var(--muted);line-height:1.6;overflow-wrap:anywhere}
+.context-menu .menu-item{min-height:44px}
+.context-menu .small-note{overflow-wrap:anywhere}
+@media(max-width:700px){.library-playlists{margin-bottom:24px}.library-playlists .grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.library-playlists .playlist-tile .collection-card{display:flex;align-items:center;gap:9px;padding:9px 34px 9px 9px;text-align:left;background:#20271b;min-height:68px}.library-playlists .collection-card>.artwork{height:44px;width:44px;flex-shrink:0;margin:0}.library-playlists .collection-card>strong{font-size:14px;overflow-wrap:anywhere}.library-playlists .collection-card>small{display:none}.library-playlists .tile-menu{right:0;bottom:calc(50% - 22px);width:32px;height:44px}.section-heading h2{font-size:18px}}

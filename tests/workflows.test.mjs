@@ -31,7 +31,7 @@ class FakeAudio extends Element {
 async function harness(t,db=memoryStore()){
   const elements=new Map(),events={},timers=new Set();
   const element=s=>{if(!elements.has(s)){const el=s==='#audio'?new FakeAudio():new Element();if(['#queuePanel','#toast','#importBanner'].includes(s))el.hidden=true;elements.set(s,el);}return elements.get(s);};
-  const document={querySelector:element,querySelectorAll:()=>[],addEventListener:(name,f)=>{events['doc:'+name]=f;},createElement:()=>new Element(),body:{append(){}},hidden:false};
+  const document={querySelector:element,querySelectorAll:()=>[],addEventListener:(name,f)=>{(events['doc:'+name]||=[]).push(f);},createElement:()=>new Element(),body:{append(){}},hidden:false};
   const window={addEventListener:(name,f)=>{events[name]=f;},scrollTo(){}};
   let hash='#library';const location={href:'https://squidify.example/',get hash(){return hash;},set hash(v){hash=v;queueMicrotask(()=>events.hashchange?.());}};
   const actions={};const navigator={userAgent:'Test',platform:'Test',maxTouchPoints:0,onLine:true,storage:{persist:async()=>true},mediaSession:{setActionHandler:(name,f)=>actions[name]=f,setPositionState(){}}};
@@ -50,7 +50,7 @@ async function harness(t,db=memoryStore()){
   await entry.evaluate();await entry.namespace.ready;
   const {context:app,actions:appActions}=entry.namespace;
   t.after(()=>{for(const timer of timers)clearTimeout(timer);});
-  return {state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,emitDocument:(name,event)=>events['doc:'+name]?.(event)};
+  return {state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,saveTrackDetails:app.playlists.saveTrackDetails,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,emitDocument:(name,event)=>events['doc:'+name]?.forEach(fn=>fn(event))};
 }
 test('empty library starts with working folder and file input alternatives',async t=>{
   const app=await harness(t);assert.match(app.element('#main').innerHTML,/Your music belongs here/);
@@ -123,4 +123,18 @@ test('pre-refactor saved records restore without migration or re-import',async t
   assert.equal(app.element('#audio').paused,true);assert.equal(app.element('#audio').currentTime,42);
   assert.equal(app.element('#audio').volume,0.4);assert.equal(app.element('#audio').muted,true);
   assert.equal(await db.stores.media.get(track.id).blob.text(),'old');
+});
+
+
+test('playlist order and song-detail edits persist without changing audio',async t=>{
+  const app=await harness(t);await app.importEntries([{file:musicFile('One')}]);const id=[...app.state.tracks.keys()][0];
+  for(const name of ['First','Second']){app.element('#playlistName').value=name;await app.savePlaylistForm({dataset:{track:id}});}
+  const second=app.state.playlists[1];await app.actions['move-playlist']({dataset:{id:second.id,delta:'-1'}});
+  app.element('#track-title').value='Renamed';app.element('#track-artist').value='New Artist';app.element('#track-album').value='New Album';
+  await app.saveTrackDetails({dataset:{id}});
+  const reopened=await harness(t,app.db);assert.equal(reopened.state.playlists[0].id,second.id);
+  assert.equal(reopened.state.tracks.get(id).title,'Renamed');assert.equal(app.db.stores.media.size,1);
+  reopened.state.view='library';reopened.render();const html=reopened.element('#main').innerHTML;
+  assert.ok(html.indexOf('library-playlists')<html.indexOf('track-table'));
+  assert.doesNotMatch(html,/Take it offline|A better kind of shuffle|Keep it on your Home Screen/);
 });

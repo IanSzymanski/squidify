@@ -73,8 +73,8 @@ export function createPlayback(context) {
     if(!id){playIntent=false;audio.pause();renderPlayer();saveSession();return;}
     loadTrack(id,true);
   }
-  function previousTrack() {
-    if(audio.currentTime>3){audio.currentTime=0;updateProgress();return;}
+  function previousTrack(restart=true) {
+    if(restart&&audio.currentTime>3){audio.currentTime=0;updateProgress();return;}
     const id=state.queue.previous();if(id)loadTrack(id,true);
   }
   function toggleShuffle() {
@@ -139,5 +139,5 @@ export function createPlayback(context) {
   'remove-track':async b=>{const id=b.dataset.id;await db.deleteTrack(id);if(id===activeId){playGeneration++;playIntent=false;audio.pause();audio.removeAttribute('src');audio.load();activeId=null;}state.tracks.delete(id);state.playlists.forEach(p=>{p.trackIds=p.trackIds.filter(x=>x!==id);});state.queue.prune(new Set(state.tracks.keys()));if(mediaURLs.has(id)){URL.revokeObjectURL(mediaURLs.get(id));mediaURLs.delete(id);}ui.releaseArtwork(id);modal.close();render();saveSession();toast('Song removed from this device.');}
   };
 
-  return { loadTrack, togglePlay, nextTrack, previousTrack, toggleShuffle, updatePositionState, saveSession, activeTrackId, isPriming, setupMediaSession, bindEvents, actions };
+  return { loadTrack, togglePlay, nextTrack, previousTrack, toggleShuffle, updatePositionState, updateMediaSession, saveSession, activeTrackId, isPriming, setupMediaSession, bindEvents, actions };
 }

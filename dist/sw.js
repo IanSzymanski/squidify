@@ -1,6 +1,6 @@
 /* Squidify caches only its own app shell. Audio is in device-local IndexedDB. */
-const VERSION = 'squidify-shell-v4';
-const SHELL = ['./','./index.html','./styles.css','./app.js','./context.js','./interface.js','./import.js','./playlists.js','./playback.js','./offline.js','./core.js','./storage.js','./metadata.js','./icons.js','./manifest.webmanifest','./icon-192.png','./icon-512.png','./icon-maskable.png'];
+const VERSION = 'squidify-shell-v5';
+const SHELL = ['./','./index.html','./styles.css','./app.js','./context.js','./interface.js','./gestures.js','./import.js','./playlists.js','./playback.js','./offline.js','./core.js','./storage.js','./metadata.js','./icons.js','./manifest.webmanifest','./icon-192.png','./icon-512.png','./icon-maskable.png'];
 const absolute = path => new URL(path,self.registration.scope).href;
 const shellURLs = new Set(SHELL.map(absolute));
 const navigationPaths = new Set([new URL(absolute('./')).pathname,new URL(absolute('./index.html')).pathname]);
