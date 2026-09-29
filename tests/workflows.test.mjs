@@ -1,0 +1,86 @@
+// Domain-flow integration in a lightweight DOM/audio harness. Real phone behavior
+// (file pickers, IndexedDB durability, playback policy) still needs device QA.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import vm from 'node:vm';
+import { readFile } from 'node:fs/promises';
+import { webcrypto, randomUUID } from 'node:crypto';
+import * as core from '../dist/core.js';
+import * as metadata from '../dist/metadata.js';
+import * as icons from '../dist/icons.js';
+
+function memoryStore(){
+  const stores=Object.fromEntries(['tracks','media','playlists','folders','settings'].map(n=>[n,new Map()]));
+  let failure=null;
+  const clone=x=>x===undefined?undefined:structuredClone(x);
+  const check=()=>{if(failure){const e=failure;failure=null;throw e;}};
+  return {stores,fail:e=>{failure=e;},all:async s=>[...stores[s].values()].map(clone),get:async(s,id)=>clone(stores[s].get(id)),put:async(s,r)=>{check();stores[s].set(r.id,clone(r));},remove:async(s,id)=>{check();stores[s].delete(id);},setting:async(id,def)=>clone(stores.settings.get(id)?.value??def),setSetting:async(id,value)=>{stores.settings.set(id,{id,value:clone(value)});},storageInfo:async()=>({quota:1e9,usage:1000,persistent:true}),saveTrack:async(t,blob)=>{check();stores.tracks.set(t.id,clone(t));stores.media.set(t.id,{id:t.id,blob});},deleteTrack:async id=>{check();stores.tracks.delete(id);stores.media.delete(id);for(const p of stores.playlists.values())p.trackIds=p.trackIds.filter(x=>x!==id);}};
+}
+function musicFile(title){
+  const make=(id,text)=>{const value=new TextEncoder().encode(text),b=new Uint8Array(11+value.length);b.set(new TextEncoder().encode(id));new DataView(b.buffer).setUint32(4,value.length+1);b[10]=3;b.set(value,11);return b;};
+  const frames=[make('TIT2',title),make('TPE1','Artist'),make('TLEN','120000')],size=frames.reduce((s,b)=>s+b.length,0),out=new Uint8Array(10+size);out.set([73,68,51,3,0,0,0,0,(size>>7)&127,size&127]);let pos=10;for(const b of frames){out.set(b,pos);pos+=b.length;}return new File([out],`${title}.mp3`,{type:'audio/mpeg'});
+}
+class Element {
+  constructor(){this.innerHTML='';this.textContent='';this.dataset={};this.hidden=false;this.open=false;this.value='';this.disabled=false;this.attrs={};this.events={};this.style={setProperty(){}};const classes=new Set();this.classList={toggle:(name,force)=>{const next=force??!classes.has(name);if(next)classes.add(name);else classes.delete(name);},contains:n=>classes.has(n)};}
+  setAttribute(k,v){this.attrs[k]=v;}removeAttribute(k){delete this.attrs[k];if(k==='src')this.src='';}getAttribute(k){return k==='src'?this.src:this.attrs[k];}
+  addEventListener(n,f,options){(this.events[n]||=[]).push({f,once:options?.once});}
+  emit(n){const callbacks=[...(this.events[n]||[])];this.events[n]=(this.events[n]||[]).filter(x=>!x.once);for(const {f}of callbacks)f({target:this});}
+  showModal(){this.open=true;}close(){this.open=false;}focus(){}click(){this.clicks=(this.clicks||0)+1;}querySelectorAll(){return [];}querySelector(){return new Element();}
+}
+class FakeAudio extends Element {
+  constructor(){super();this.src='';this.paused=true;this.currentTime=0;this.duration=120;this.volume=1;this.muted=false;this.playbackRate=1;}
+  async play(){this.paused=false;this.emit('play');}pause(){const old=this.paused;this.paused=true;if(!old)this.emit('pause');}load(){this.currentTime=0;if(this.src)this.emit('loadedmetadata');}
+}
+async function harness(t,db=memoryStore()){
+  const elements=new Map(),events={},timers=new Set();
+  const element=s=>{if(!elements.has(s)){const el=s==='#audio'?new FakeAudio():new Element();if(['#queuePanel','#toast','#importBanner'].includes(s))el.hidden=true;elements.set(s,el);}return elements.get(s);};
+  const document={querySelector:element,querySelectorAll:()=>[],addEventListener:(name,f)=>{events['doc:'+name]=f;},createElement:()=>new Element(),body:{append(){}},hidden:false};
+  const window={addEventListener:(name,f)=>{events[name]=f;},scrollTo(){}};
+  let hash='#library';const location={href:'https://squidify.example/',get hash(){return hash;},set hash(v){hash=v;queueMicrotask(()=>events.hashchange?.());}};
+  const actions={};const navigator={userAgent:'Test',platform:'Test',maxTouchPoints:0,onLine:true,storage:{persist:async()=>true},mediaSession:{setActionHandler:(name,f)=>actions[name]=f,setPositionState(){}}};
+  const context=vm.createContext({__imports:{db,core,metadata,icons},document,window,navigator,location,URL,Blob,File,TextEncoder,DataView,Uint8Array,ArrayBuffer,crypto:{subtle:webcrypto.subtle,randomUUID},Audio:FakeAudio,MediaMetadata:class{constructor(value){Object.assign(this,value);}},AbortController,FormData,matchMedia:()=>({matches:false}),console:{error(){}},setTimeout:(f,ms)=>{const timer=setTimeout(f,ms);timers.add(timer);return timer;},clearTimeout:id=>{clearTimeout(id);timers.delete(id);}});
+  let source=await readFile(new URL('../dist/app.js',import.meta.url),'utf8');
+  source=source.replace(/^import .+;\n/gm,'').replace(/\ninit\(\);\s*$/,'');
+  const imports='const db=__imports.db;const {PlayQueue,formatTime,formatBytes,escapeHTML:esc}=__imports.core;const {isAudio,mimeFor,fingerprint,readMetadata}=__imports.metadata;const {icon,mark}=__imports.icons;\n';
+  vm.runInContext(imports+source+'\nglobalThis.api={init,state,actions,importEntries,savePlaylistForm,addToPlaylist,saveSession,render,readRoute};',context);
+  t.after(()=>{for(const timer of timers)clearTimeout(timer);});
+  await context.api.init();
+  return {...context.api,db,element,mediaActions:actions};
+}
+test('empty library starts with working folder and file input alternatives',async t=>{
+  const app=await harness(t);assert.match(app.element('#main').innerHTML,/Your music belongs here/);
+  await app.actions['choose-folder']();assert.equal(app.element('#folderInput').clicks,1);
+  app.actions['choose-files']();assert.equal(app.element('#fileInput').clicks,1);
+});
+test('import, duplicate detection, playlist edits, restored queue and reload stay consistent',async t=>{
+  const app=await harness(t);
+  const one=musicFile('One'),two=musicFile('Two');await app.importEntries([{file:one},{file:two},{file:one}]);
+  assert.equal(app.state.tracks.size,2);assert.equal(app.db.stores.media.size,2);assert.equal(app.element('#audio').paused,true);
+  const ids=[...app.state.tracks.keys()];app.element('#playlistName').value='Night listening';
+  await app.savePlaylistForm({dataset:{id:'',track:ids[0]}});const p=app.state.playlists[0];
+  await app.addToPlaylist(p.id,ids[1]);await app.addToPlaylist(p.id,ids[1]);assert.equal(p.trackIds.length,2);
+  app.state.view='playlist';app.state.detail=p.id;
+  await app.actions['move-playlist-track']({dataset:{id:ids[1],delta:'-1'}});assert.equal(p.trackIds[0],ids[1]);
+  await app.actions['remove-playlist-track']({dataset:{id:ids[0]}});assert.equal(p.trackIds.length,1);assert.equal(app.state.tracks.size,2);
+  await app.actions['toggle-play']();assert.equal(app.element('#audio').paused,false);
+  app.mediaActions.play();assert.equal(app.element('#audio').paused,false,'play command must not toggle into pause');
+  app.element('#audio').currentTime=24;app.saveSession(true);
+  const reopened=await harness(t,app.db);assert.equal(reopened.state.tracks.size,2);assert.equal(reopened.state.playlists[0].name,'Night listening');assert.equal(reopened.state.playlists[0].trackIds[0],ids[1]);
+  assert.equal(reopened.element('#audio').paused,true);assert.equal(reopened.element('#audio').currentTime,24);assert.equal(reopened.state.queue.current,app.state.queue.current);
+});
+test('failed playlist save keeps the previous state; a quota failure leaves no half-imported song',async t=>{
+  const app=await harness(t);app.element('#playlistName').value='Keep this name';app.db.fail(new Error('Disk unavailable'));
+  await assert.rejects(app.savePlaylistForm({dataset:{}}));assert.equal(app.state.playlists.length,0);assert.equal(app.element('#playlistName').value,'Keep this name');
+  app.db.fail(Object.assign(new Error('Quota exceeded'),{name:'QuotaExceededError'}));await app.importEntries([{file:musicFile('Full storage')}]);
+  assert.equal(app.state.tracks.size,0);assert.equal(app.db.stores.media.size,0);assert.match(app.element('#toast').textContent,/storage is full/);
+});
+test('deleting a song removes saved bytes and playlist references; deleting a playlist keeps songs',async t=>{
+  const app=await harness(t);await app.importEntries([{file:musicFile('One')},{file:musicFile('Two')}]);const ids=[...app.state.tracks.keys()];
+  app.element('#playlistName').value='Playlist';await app.savePlaylistForm({dataset:{track:ids[0]}});const p=app.state.playlists[0];await app.addToPlaylist(p.id,ids[1]);
+  await app.actions['remove-track']({dataset:{id:ids[0]}});assert.equal(app.db.stores.media.size,1);assert.equal(app.state.playlists[0].trackIds.length,1);assert.equal(app.state.queue.current,null);
+  await app.actions['delete-playlist']({dataset:{id:p.id}});assert.equal(app.state.playlists.length,0);assert.equal(app.db.stores.media.size,1);assert.equal(app.state.tracks.size,1);
+});
+test('local metadata is escaped before it reaches the music list',async t=>{
+  const app=await harness(t);await app.importEntries([{file:musicFile('<img src=x onerror=alert(1)>')}]);
+  assert.doesNotMatch(app.element('#main').innerHTML,/<img src=x/);assert.match(app.element('#main').innerHTML,/&lt;img src=x/);
+});
