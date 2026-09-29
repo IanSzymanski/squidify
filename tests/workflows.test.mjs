@@ -25,7 +25,7 @@ class Element {
   setAttribute(k,v){this.attrs[k]=v;}removeAttribute(k){delete this.attrs[k];if(k==='src')this.src='';}getAttribute(k){return k==='src'?this.src:this.attrs[k];}
   addEventListener(n,f,options){(this.events[n]||=[]).push({f,once:options?.once});}
   emit(n){const callbacks=[...(this.events[n]||[])];this.events[n]=(this.events[n]||[]).filter(x=>!x.once);for(const {f}of callbacks)f({target:this});}
-  showModal(){this.open=true;}close(){this.open=false;}focus(){}click(){this.clicks=(this.clicks||0)+1;}querySelectorAll(){return [];}querySelector(){return new Element();}
+  showModal(){this.open=true;}close(){this.open=false;}focus(){}click(){this.clicks=(this.clicks||0)+1;}append(...children){this.children=children;}querySelectorAll(){return [];}querySelector(){return new Element();}
 }
 class FakeAudio extends Element {
   constructor(){super();this.src='';this.paused=true;this.currentTime=0;this.duration=120;this.volume=1;this.muted=false;this.playbackRate=1;}
@@ -45,12 +45,27 @@ async function harness(t,db=memoryStore()){
   vm.runInContext(imports+source+'\nglobalThis.api={init,state,actions,importEntries,savePlaylistForm,addToPlaylist,saveSession,render,readRoute};',context);
   t.after(()=>{for(const timer of timers)clearTimeout(timer);});
   await context.api.init();
-  return {...context.api,db,element,mediaActions:actions};
+  return {...context.api,db,element,mediaActions:actions,emitDocument:(name,event)=>events['doc:'+name]?.(event)};
 }
 test('empty library starts with working folder and file input alternatives',async t=>{
   const app=await harness(t);assert.match(app.element('#main').innerHTML,/Your music belongs here/);
   await app.actions['choose-folder']();assert.equal(app.element('#folderInput').clicks,1);
   app.actions['choose-files']();assert.equal(app.element('#fileInput').clicks,1);
+});
+test('opening files keeps the import dialog and input alive until selection or cancellation',async t=>{
+  const app=await harness(t);app.actions['add-music']();const input=app.element('#fileInput'),dialog=app.element('#modal');
+  assert.equal(dialog.open,true);assert.equal(app.element('#filePickerSlot').children[0],input);
+  app.actions['choose-files']();assert.equal(dialog.open,true,'opening a native picker must not close the parent dialog');assert.equal(app.state.pickerOpen,true);
+  app.element('#main').innerHTML='unchanged while native picker is open';app.render();app.emitDocument('visibilitychange',{});
+  assert.equal(app.element('#main').innerHTML,'unchanged while native picker is open');
+  app.emitDocument('cancel',{target:input});assert.equal(app.state.pickerOpen,false);assert.equal(dialog.open,true);
+  assert.match(app.element('#main').innerHTML,/Your music belongs here/);
+});
+test('native file control clicks retain default picker behavior, not delegated button actions',async t=>{
+  const app=await harness(t);let prevented=false;
+  app.emitDocument('click',{target:app.element('#fileInput'),preventDefault(){prevented=true;}});
+  assert.equal(prevented,false);assert.equal(app.state.pickerOpen,true);
+  app.emitDocument('cancel',{target:app.element('#fileInput')});assert.equal(app.state.pickerOpen,false);
 });
 test('import, duplicate detection, playlist edits, restored queue and reload stay consistent',async t=>{
   const app=await harness(t);

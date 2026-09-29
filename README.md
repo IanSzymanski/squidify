@@ -38,3 +38,5 @@ For large libraries, import in smaller batches and watch available storage. Dupl
 Static assets live in `dist`. Source is deployed from the Sites Git repository. Run `npm test` for pure playback/metadata, offline-shell and storage workflow tests. No build step or runtime dependencies are required.
 
 For any release that changes cached assets, update `VERSION` in `dist/sw.js`. The worker activates only after every shell asset has been cached. Database schema is versioned independently.
+
+Updates wait for existing app windows to close and do not force a reload or claim an open session. To apply an update, open Squidify online, then close all its tabs/app windows and reopen it. File inputs stay mounted while the native picker is open; the import dialog is closed only after files have been selected. Rendering is deferred during native selection.

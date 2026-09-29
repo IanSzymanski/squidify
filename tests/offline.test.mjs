@@ -24,7 +24,7 @@ async function workerHarness(){
   return {lifecycle,request,message,stores,setOffline:value=>offline=value,setFail:path=>failPath=path,get networkCalls(){return networkCalls;},get claimed(){return claimed;},get skipped(){return skipped;}};
 }
 test('complete installed shell launches and serves all modules with the network disabled',async()=>{
-  const w=await workerHarness();await w.lifecycle('install');await w.lifecycle('activate');assert.equal(w.claimed,true);assert.equal(w.skipped,true);
+  const w=await workerHarness();await w.lifecycle('install');await w.lifecycle('activate');assert.equal(w.claimed,false,'do not take over an open file picker');assert.equal(w.skipped,false,'updates wait for existing windows to close');
   w.setOffline(true);const count=w.networkCalls;
   assert.match(await (await w.request('/?home=1',true)).text(),/id="audio"/);
   for(const path of ['app.js','styles.css','core.js','storage.js','metadata.js','icons.js','manifest.webmanifest','icon-192.png','icon-512.png','icon-maskable.png'])assert.equal((await w.request(path)).status,200,path);

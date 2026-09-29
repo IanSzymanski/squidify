@@ -1,5 +1,5 @@
 /* Squidify caches only its own app shell. Audio is in device-local IndexedDB. */
-const VERSION = 'squidify-shell-v1';
+const VERSION = 'squidify-shell-v2';
 const SHELL = ['./','./index.html','./styles.css','./app.js','./core.js','./storage.js','./metadata.js','./icons.js','./manifest.webmanifest','./icon-192.png','./icon-512.png','./icon-maskable.png'];
 const absolute = path => new URL(path,self.registration.scope).href;
 const shellURLs = new Set(SHELL.map(absolute));
@@ -21,13 +21,14 @@ self.addEventListener('install',event=>{
     const cache=await caches.open(VERSION);
     // An interrupted installation never activates an incomplete offline shell.
     await cacheShell(cache);
-    await self.skipWaiting();
+    // Updates wait for existing app windows to close. Do not take over a live
+    // session while a native file picker (or music playback) is in progress.
   })());
 });
 self.addEventListener('activate',event=>{
   event.waitUntil((async()=>{
     for(const key of await caches.keys())if(key.startsWith('squidify-shell-')&&key!==VERSION)await caches.delete(key);
-    await self.clients.claim();
+    // New navigations use this worker. Already-open pages keep their controller.
   })());
 });
 self.addEventListener('fetch',event=>{

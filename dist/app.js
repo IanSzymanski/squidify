@@ -6,6 +6,7 @@ import { icon, mark } from './icons.js';
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const main = $('#main'), audio = $('#audio'), modal = $('#modal'), nowDialog = $('#nowDialog');
+const fileInput = $('#fileInput'), folderInput = $('#folderInput');
 const state = { tracks: new Map(), playlists: [], folders: [], queue: new PlayQueue(), view: 'library', detail: '', search: '', tab: 'songs', sort: 'added', busy: false, stopImport: false, shellReady: false, storage: {}, installPrompt: null, ready: false };
 const artworkURLs = new Map(), mediaURLs = new Map(), mediaPromises = new Map();
 let activeId = null, playGeneration = 0, playIntent = false, priming = false, audioUnlocked = false, toastTimer, stateTimer, lastSavedAt = 0, metadataJobs = [], probing = false;
@@ -129,6 +130,7 @@ function renderSettings() {
   return header('Offline & settings','Everything for listening on this device.','SQUIDIFY',null)+`<div class="settings-grid"><section class="settings-card"><h2>Ready when you are</h2><div class="status-line">${icon(state.shellReady?'check':'download')}<span>${state.shellReady?'App available offline':'Offline app is not ready yet'}</span></div><p>${state.shellReady?'The app is saved in this browser. Imported music and playlists work without an internet connection.':'Open Squidify online once and keep it open until this status changes. Offline setup needs a secure browser connection.'}</p><div class="stat-line"><span>Saved songs</span><strong>${state.tracks.size}</strong></div><div class="stat-line"><span>Connection</span><strong>${navigator.onLine?'Online':'Offline'}</strong></div><button class="button" data-action="check-offline">${icon('check')}Check offline readiness</button><p class="small-note">After setup, try Airplane Mode and reopen the app before relying on it away from home.</p></section><section class="settings-card"><h2>On your Home Screen</h2>${standalone()?'<div class="status-line">'+icon('check')+'Running as an installed app</div>':''}<ol>${isIOS?'<li>Open this link in Safari.</li><li>Tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>. Keep <strong>Open as Web App</strong> on if shown.</li>':'<li>Open this link in your regular browser.</li><li>Use the browser menu and choose <strong>Install app</strong> or <strong>Add to Home Screen</strong>.</li>'}<li>Open Squidify from its new icon, then import your music there.</li></ol>${state.installPrompt?'<button class="button primary" data-action="install">Install Squidify</button>':''}<p class="small-note">Your browser tab and installed app may have separate storage. Set up your library inside the version you’ll use.</p></section><section class="settings-card"><h2>Music storage</h2><div class="stat-line"><span>Audio saved</span><strong>${formatBytes(bytes)}</strong></div>${info.quota?`<div class="stat-line"><span>Browser storage used</span><strong>${formatBytes(info.usage)} / ${formatBytes(info.quota)}</strong></div><div class="storage-bar"><span style="width:${Math.min(100,(info.usage||0)/info.quota*100)}%"></span></div>`:''}<div class="stat-line"><span>Storage protection</span><strong>${info.persistent?'Persistent storage granted':'Managed by your browser'}</strong></div><button class="button" data-action="persist">${icon('shield')}${info.persistent?'Check storage protection':'Request storage protection'}</button><p class="small-note">Keep your original music files. Clearing website data or removing the app can erase saved music and playlists. Browsers may also reclaim unprotected storage.</p></section><section class="settings-card"><h2>Local folders</h2><p>${'showDirectoryPicker' in window?'Folder connections can be remembered in this browser. Rescan to add new songs; existing copies and playlists stay intact.':'This browser uses file imports. Choose a folder if supported, or select multiple audio files. Saved copies stay available after you close the app.'}</p><button class="button primary" data-action="add-music">${icon('plus')}Add music</button>${state.folders.map(f=>`<div class="folder-row">${icon('folder')}<span>${esc(f.name)}</span><button class="button" data-action="rescan" data-id="${esc(f.id)}">Rescan</button><button class="icon-button" data-action="forget-folder" data-id="${esc(f.id)}" aria-label="Forget connection to ${esc(f.name)}">${icon('close')}</button></div>`).join('')}<p class="small-note">Choose files downloaded to your device. Cloud-only files need a connection before they can be imported.</p></section><section class="settings-card"><h2>Playback</h2><p>Balanced shuffle plays each queued song once and separates artists and albums where possible. Previous returns through the actual played order.</p><p>Lock Screen and headphone controls use your browser’s media support. Your phone can still pause or suspend browser playback in the background.</p><p class="small-note">MP3, AAC/M4A, WAV, FLAC, Ogg and other browser-supported audio. Codec support varies by device. Protected subscription downloads cannot be played.</p>${isIOS?'<p class="small-note">Use your phone’s volume buttons to adjust volume.</p>':''}</section><section class="settings-card"><h2>At your fingertips</h2><div class="key-help"><kbd>Space</kbd> Play / pause<br><kbd>←</kbd> <kbd>→</kbd> Seek 5 seconds<br><kbd>Shift</kbd> + <kbd>←</kbd> / <kbd>→</kbd> Previous / next<br><kbd>S</kbd> Balanced shuffle &nbsp; <kbd>L</kbd> Like song<br><kbd>/</kbd> Search your music</div><details><summary>About your music</summary><p>Squidify reads local audio and copies it into this app’s storage on this device. Your music is never sent to a server. Changes in Squidify do not modify the original files.</p></details></section></div>`;
 }
 function render() {
+  if(state.pickerOpen)return;
   if(!state.ready)return;
   if(state.search || state.view==='library')main.innerHTML=renderLibrary();
   else if(['liked','playlist','album'].includes(state.view))main.innerHTML=renderCollection();
@@ -138,13 +140,17 @@ function render() {
 }
 
 function setModal(content, className = '') {
+  // Keep the same input nodes alive when switching dialogs.
+  $('#fileInputs').append(fileInput,folderInput);
   modal.className=`modal ${className}`; modal.innerHTML=content;
   if(!modal.open)modal.showModal();
 }
 const modalHead = title => `<div class="modal-head"><h2 id="modalTitle">${esc(title)}</h2><button class="icon-button" data-action="close-modal" aria-label="Close">${icon('close')}</button></div>`;
 function addMusicDialog() {
   if(state.busy)return toast('Finish the current import first.');
-  setModal(modalHead('Add your music')+`<p>Choose a local folder or audio files. Squidify saves a copy on this device for offline playback.</p><button class="import-choice" data-action="choose-folder">${icon('folder')}<span><strong>Choose a folder</strong><small>Include songs in its subfolders</small></span></button><button class="import-choice" data-action="choose-files">${icon('music')}<span><strong>Choose audio files</strong><small>Select one song or a whole collection</small></span></button><p class="small-note">${!('showDirectoryPicker' in window)?'If your phone cannot select folders, use Choose audio files. ':''}For offline importing, the original files must already be downloaded to this device.</p>`);
+  setModal(modalHead('Add your music')+`<p>Choose a local folder or audio files. Squidify saves a copy on this device for offline playback.</p><label for="fileInput">Audio files</label><div id="filePickerSlot"></div><label for="folderInput">Music folder</label>${'showDirectoryPicker' in window?`<button type="button" class="import-choice" data-action="choose-folder">${icon('folder')}<span><strong>Connect a folder</strong><small>Include songs in its subfolders</small></span></button>`:'<div id="folderPickerSlot"></div>'}<p class="small-note">If folder selection is unavailable, choose audio files instead. For offline importing, files must already be downloaded to this device.</p>`);
+  $('#filePickerSlot').append(fileInput);
+  if(!('showDirectoryPicker' in window))$('#folderPickerSlot').append(folderInput);
 }
 function playlistForm(id = null, trackId = null) {
   const p=playlist(id);
@@ -198,16 +204,18 @@ async function* walkFolder(handle,path='') {
 }
 async function chooseFolder() {
   if(state.busy)return toast('Finish the current import first.');
-  modal.close();
-  if(!('showDirectoryPicker' in window)){$('#folderInput').click();return;}
+  if(!('showDirectoryPicker' in window)){openFilePicker(folderInput);return;}
+  state.pickerOpen=true;
   try {
     const handle=await window.showDirectoryPicker({mode:'read',id:'squidify-music'});
+    state.pickerOpen=false;
     let existing;
     for(const f of state.folders){try{if(await handle.isSameEntry(f.handle))existing=f;}catch{}}
     const folder=existing||{id:idToken(),name:handle.name,handle};
     try {await db.put('folders',folder);if(!existing)state.folders.push(folder);}catch{toast('Music can be imported, but this browser could not remember the folder connection.');}
     await importEntries(walkFolder(handle,handle.name),folder.id);
   } catch(error){if(error.name!=='AbortError')report(error,'Could not read that folder. Try Choose files instead.');}
+  finally {state.pickerOpen=false;render();}
 }
 async function rescanFolder(id) {
   if(state.busy)return toast('Finish the current import first.');
@@ -218,8 +226,16 @@ async function rescanFolder(id) {
     await importEntries(walkFolder(f.handle,f.name),f.id);
   }catch(e){report(e,'Reconnect this folder using Add music. Existing songs are still saved.');}
 }
-function selectFiles() {if(state.busy)return toast('Finish the current import first.');modal.close();$('#fileInput').click();}
+function openFilePicker(input) {
+  if(state.busy)return toast('Finish the current import first.');
+  state.pickerOpen=true;
+  // Stay within the user gesture, without closing dialogs or restoring focus.
+  try {if(typeof input.showPicker==='function')input.showPicker();else input.click();}
+  catch {try{input.click();}catch(e){state.pickerOpen=false;report(e,'Use Add music to choose files directly.');}}
+}
+function selectFiles() {openFilePicker(fileInput);}
 async function importEntries(entries,folderId=null) {
+  state.pickerOpen=false;
   if(state.busy)return;
   state.busy=true;state.stopImport=false;modal.close();
   const banner=$('#importBanner'),progress=$('#importProgress'),text=$('#importText');banner.hidden=false;progress.removeAttribute('value');
@@ -350,6 +366,7 @@ function highlightCurrent() {
   $$('[data-track-row]').forEach((row,i)=>{const current=row.dataset.trackRow===state.queue.current;row.classList.toggle('current',current);const button=$('.number-button',row);if(button)button.innerHTML=current?icon(!audio.paused&&!priming?'pause':'play'):i+1;});
 }
 function renderPlayer() {
+  if(state.pickerOpen)return;
   const t=byId(state.queue.current),playing=!audio.paused&&!priming;
   $('#nowTitle').textContent=t?.title||'Nothing playing yet';$('#nowArtist').textContent=t?.artist||'Choose something from your library';
   const art=artwork(t);$('#nowArtwork').innerHTML=art.replace(/^<span[^>]+>/,'').replace(/<\/span>$/,'');
@@ -363,6 +380,7 @@ function renderPlayer() {
   highlightCurrent();updateProgress();
 }
 function updateProgress() {
+  if(state.pickerOpen)return;
   const duration=activeId===state.queue.current&&Number.isFinite(audio.duration)&&!priming?audio.duration:byId(state.queue.current)?.duration||0;
   const current=activeId===state.queue.current&&!priming?audio.currentTime||0:0;
   $$('.elapsed').forEach(el=>el.textContent=formatTime(current));$$('.duration').forEach(el=>el.textContent=duration?formatTime(duration):'0:00');
@@ -458,7 +476,12 @@ const actions = {
 };
 
 document.addEventListener('click',event=>{
+  if(event.target===fileInput||event.target===folderInput){
+    if(state.busy){event.preventDefault();toast('Finish the current import first.');return;}
+    state.pickerOpen=true;return;
+  }
   const button=event.target.closest('[data-action],[data-view]');if(!button||button.disabled)return;
+  event.preventDefault();
   if(button.dataset.view){route(button.dataset.view,button.dataset.id||'');return;}
   const action=actions[button.dataset.action];if(action)Promise.resolve(action(button)).catch(e=>report(e));
 });
@@ -481,8 +504,12 @@ document.addEventListener('input',event=>{
 document.addEventListener('change',event=>{
   const el=event.target;
   if(el.id==='sortSelect'){state.sort=el.value;render();saveSession();}
-  if(el.id==='fileInput'||el.id==='folderInput'){const files=[...el.files];el.value='';importEntries(files.map(file=>({file,path:file.webkitRelativePath||file.name}))).catch(e=>report(e));}
+  if(el===fileInput||el===folderInput){state.pickerOpen=false;const files=[...el.files];el.value='';if(files.length)importEntries(files.map(file=>({file,path:file.webkitRelativePath||file.name}))).catch(e=>report(e));else render();}
 });
+document.addEventListener('cancel',event=>{if(event.target===fileInput||event.target===folderInput){state.pickerOpen=false;render();}});
+// Older browsers may omit the file-input cancel event. The next page interaction
+// safely ends that pending state; blur/focus alone must not dismiss a live picker.
+document.addEventListener('pointerdown',event=>{if(state.pickerOpen&&event.target!==fileInput&&event.target!==folderInput){state.pickerOpen=false;}});
 document.addEventListener('keydown',event=>{
   if(event.key==='Escape'&&!$('#queuePanel').hidden){$('#queuePanel').hidden=true;return;}
   if(modal.open||['INPUT','TEXTAREA','SELECT'].includes(event.target.tagName)||event.target.isContentEditable||event.altKey||event.ctrlKey||event.metaKey)return;
@@ -499,7 +526,7 @@ window.addEventListener('online',renderOfflineBadge);window.addEventListener('of
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();state.installPrompt=e;if(state.view==='settings')render();});
 window.addEventListener('appinstalled',()=>{state.installPrompt=null;toast('Squidify installed. Open it from your Home Screen.');if(state.view==='settings')render();});
 window.addEventListener('pagehide',()=>saveSession(true));
-document.addEventListener('visibilitychange',()=>{if(document.hidden)saveSession(true);else{renderPlayer();if(nowDialog.open)renderNowPlaying();}});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)saveSession(true);else if(!state.pickerOpen){renderPlayer();if(nowDialog.open)renderNowPlaying();}});
 audio.addEventListener('play',()=>{audioUnlocked=true;if(priming)return;playIntent=true;renderPlayer();if(navigator.mediaSession)navigator.mediaSession.playbackState='playing';});
 audio.addEventListener('pause',()=>{if(priming)return;playIntent=false;renderPlayer();saveSession();if(navigator.mediaSession)navigator.mediaSession.playbackState='paused';});
 audio.addEventListener('ended',()=>{if(!priming)nextTrack(false);});
