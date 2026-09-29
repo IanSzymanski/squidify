@@ -50,7 +50,7 @@ async function harness(t,db=memoryStore()){
   await entry.evaluate();await entry.namespace.ready;
   const {context:app,actions:appActions}=entry.namespace;
   t.after(()=>{for(const timer of timers)clearTimeout(timer);});
-  return {state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,saveTrackDetails:app.playlists.saveTrackDetails,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,emitDocument:(name,event)=>events['doc:'+name]?.forEach(fn=>fn(event))};
+  return {offline:app.offline,state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,saveTrackDetails:app.playlists.saveTrackDetails,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,emitDocument:(name,event)=>events['doc:'+name]?.forEach(fn=>fn(event))};
 }
 test('empty library starts with working folder and file input alternatives',async t=>{
   const app=await harness(t);assert.match(app.element('#main').innerHTML,/Your music belongs here/);
@@ -137,4 +137,22 @@ test('playlist order and song-detail edits persist without changing audio',async
   reopened.state.view='library';reopened.render();const html=reopened.element('#main').innerHTML;
   assert.ok(html.indexOf('library-playlists')<html.indexOf('track-table'));
   assert.doesNotMatch(html,/Take it offline|A better kind of shuffle|Keep it on your Home Screen/);
+});
+
+
+test('installed-update toast is shown once, only for the running ready release',async t=>{
+  const app=await harness(t);
+  await app.offline.announceInstalled('squidify-shell-v5',true);
+  assert.equal(app.element('#toast').hidden,true);
+  assert.equal(app.db.stores.settings.has('installedShellVersion'),false);
+  await Promise.all([app.offline.announceInstalled('squidify-shell-v6',true),app.offline.announceInstalled('squidify-shell-v6',true)]);
+  assert.match(app.element('#toast').textContent,/Squidify updated/);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v6');
+  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v6',true);
+  assert.equal(reopened.element('#toast').hidden,true);
+});
+test('a first install records its release without claiming an update',async t=>{
+  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v6',false);
+  assert.equal(app.element('#toast').hidden,true);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v6');
 });

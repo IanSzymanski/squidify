@@ -91,3 +91,36 @@ Playlists now appear above songs in the library. Their custom order is saved in
 an optional `playlistOrder` setting; existing databases need no migration. Song
 detail edits affect local catalog records only, never the original file or saved
 audio bytes. The specified empty-library help cards and sidebar copy are removed.
+
+## Iridescent identity and release feedback
+
+The primary colors are mint `#0eedb5` and violet `#ae00ff`, used on an ink-dark
+neutral palette. Key accents use both colors; ordinary state indicators remain
+solid mint. Playlist covers are deterministic CSS conic-gradient folds seeded
+by playlist ID, with slow transform-only movement and stable cover identity.
+The motion stops for reduced-motion preferences and hidden pages.
+
+`motion.js` supplies staggered view entrances and a 680 ms SVG wave wash between
+routes. Startup renders immediately. Rapid navigation cancels stale transitions;
+file-picker-safe navigation and reduced-motion preferences skip the wash.
+Lucide 1.8.0 SVG nodes are vendored in `icons.js`; attribution and the ISC license
+are in `dist/LUCIDE-LICENSE.txt`. No runtime CDN or icon fetch is needed.
+
+The v6 worker records whether it replaced an older offline shell. After the
+matching active shell confirms readiness, a one-time toast announces the update
+and remembers it in `installedShellVersion`. Waiting updates get a separate
+close-and-reopen notice. Neither path reloads a live session or forces activation.
+Keep `release.js` and the worker version synchronized for later releases.
+
+The headphone squid was edited from the supplied sleepy-squid reference with the
+built-in image generator. Prompt brief: preserve the sleepy eyes and squid shape,
+add simple over-ear headphones, use a mint-to-violet graphic on a near-black
+square with no text. Source: `assets/squid-headphones-source.png`. Browser,
+180 px Apple touch, 192/512 px app, and maskable variants are under `dist` with
+`-v6` names to avoid stale asset caches. Existing iOS Home Screen icons may retain
+their old cached image; new installations use the new Apple touch icon.
+
+Verification: 40 automated tests cover playback/storage/gesture regressions,
+offline packaging, first-install versus upgrade notices, one-time notifications,
+and transition cancellation/reduced motion. Physical-device animation and Home
+Screen appearance remain device QA items.

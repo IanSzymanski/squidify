@@ -1,3 +1,4 @@
+import { createMotion } from './motion.js';
 import { bindGestures } from './gestures.js';
 import * as db from './storage.js';
 import { formatTime, formatBytes, escapeHTML as esc } from './core.js';
@@ -6,6 +7,8 @@ import { icon, mark } from './icons.js';
 export function createInterface(context) {
   const { $, $$, main, audio, modal, nowDialog, fileInput, folderInput, state, isIOS, standalone, trackArray, byId, playlist, plural, totalDuration } = context;
   const playback = context.playback;
+  const motion = createMotion(main, $('#routeWash'));
+  let routeKey;
   const toggleLike = (...args) => context.playlists.toggleLike(...args);
   const chooseFolder = (...args) => context.importer.chooseFolder(...args);
   const selectFiles = (...args) => context.importer.selectFiles(...args);
@@ -19,10 +22,10 @@ export function createInterface(context) {
   const artworkURLs = new Map();
   let toastTimer;
 
-  function toast(message, error = false) {
+  function toast(message, error = false, duration) {
     clearTimeout(toastTimer);
     const el = $('#toast'); el.textContent = message; el.classList.toggle('error', error); el.hidden = false;
-    toastTimer = setTimeout(() => { el.hidden = true; }, error ? 6500 : 3500);
+    toastTimer = setTimeout(() => { el.hidden = true; }, duration || (error ? 6500 : 4500));
   }
   function report(error, fallback = 'Something went wrong. Please try again.') {
     if (error?.name === 'AbortError') return;
@@ -42,8 +45,10 @@ export function createInterface(context) {
     return `<span class="artwork ${extra}">${url ? `<img src="${url}" alt="" loading="lazy">` : icon(fallback)}</span>`;
   }
   function collectionArt(p, extra = '') {
-    const track = p?.trackIds?.map(byId).find(t => t?.artwork);
-    return artwork(track, `${extra} ${p?.color || 'purple'}`, 'list');
+    // Stable per-playlist folds: different covers without saved image blobs.
+    let seed=0;for(const char of p?.id||'playlist')seed=(Math.imul(seed,31)+char.charCodeAt(0))>>>0;
+    const angle=seed%360,delay=-(seed%190)/10,duration=16+seed%13;
+    return `<span class="artwork playlist-art ${extra}" aria-hidden="true" style="--fold-angle:${angle}deg;--fold-delay:${delay}s;--fold-duration:${duration}s;--fold-x:${25+seed%50}%"><i class="fold-sheet"></i><i class="fold-glint"></i></span>`;
   }
   function route(name, id = '') {
     state.search = ''; $('#searchInput').value = '';
@@ -53,10 +58,14 @@ export function createInterface(context) {
   }
   function readRoute() {
     const [name, ...parts] = location.hash.slice(1).split('/');
-    state.view = ['library','liked','playlists','playlist','album','settings'].includes(name) ? name : 'library';
-    try { state.detail = decodeURIComponent(parts.join('/')); } catch { state.detail = ''; }
-    state.search = ''; $('#searchInput').value = '';
-    render(); window.scrollTo({ top:0 });
+    const view = ['library','liked','playlists','playlist','album','settings'].includes(name) ? name : 'library';
+    let detail;try { detail=decodeURIComponent(parts.join('/')); } catch { detail=''; }
+    const nextKey=view+'/'+detail;
+    const commit=()=>{
+      state.view=view;state.detail=detail;state.search='';$('#searchInput').value='';
+      render();window.scrollTo({top:0});routeKey=nextKey;
+    };
+    motion.change(commit,!state.pickerOpen && nextKey!==routeKey);
   }
   function currentList() {
     let list;
@@ -258,7 +267,7 @@ export function createInterface(context) {
   window.addEventListener('online',renderOfflineBadge);window.addEventListener('offline',renderOfflineBadge);
   window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();state.installPrompt=e;if(state.view==='settings')render();});
   window.addEventListener('appinstalled',()=>{state.installPrompt=null;toast('Squidify installed. Open it from your Home Screen.');if(state.view==='settings')render();});
-  document.addEventListener('visibilitychange',()=>{if(document.hidden)saveSession(true);else if(!state.pickerOpen){renderPlayer();if(nowDialog.open)renderNowPlaying();}});
+  document.addEventListener('visibilitychange',()=>{document.documentElement?.classList.toggle('page-hidden',document.hidden);if(document.hidden)saveSession(true);else if(!state.pickerOpen){renderPlayer();if(nowDialog.open)renderNowPlaying();}});
   }
 
   function releaseArtwork(id) { if(artworkURLs.has(id)){URL.revokeObjectURL(artworkURLs.get(id));artworkURLs.delete(id);} }

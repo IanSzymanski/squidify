@@ -1,6 +1,6 @@
 /* Squidify caches only its own app shell. Audio is in device-local IndexedDB. */
-const VERSION = 'squidify-shell-v5';
-const SHELL = ['./','./index.html','./styles.css','./app.js','./context.js','./interface.js','./gestures.js','./import.js','./playlists.js','./playback.js','./offline.js','./core.js','./storage.js','./metadata.js','./icons.js','./manifest.webmanifest','./icon-192.png','./icon-512.png','./icon-maskable.png'];
+const VERSION = 'squidify-shell-v6';
+const SHELL = ['./','./index.html','./styles.css','./app.js','./context.js','./interface.js','./gestures.js','./import.js','./playlists.js','./playback.js','./offline.js','./release.js','./motion.js','./core.js','./storage.js','./metadata.js','./icons.js','./manifest.webmanifest','./icon-192-v6.png','./icon-512-v6.png','./icon-maskable-v6.png','./apple-touch-icon-v6.png','./favicon-32-v6.png'];
 const absolute = path => new URL(path,self.registration.scope).href;
 const shellURLs = new Set(SHELL.map(absolute));
 const navigationPaths = new Set([new URL(absolute('./')).pathname,new URL(absolute('./index.html')).pathname]);
@@ -44,6 +44,8 @@ self.addEventListener('install',event=>{
     const cache=await caches.open(VERSION);
     // An interrupted installation never activates an incomplete offline shell.
     await cacheShell(cache);
+    const updated=(await caches.keys()).some(key=>key.startsWith('squidify-shell-')&&key!==VERSION);
+    await cache.put(absolute('./.installed-release'),new Response(JSON.stringify({updated}),{headers:{'content-type':'application/json'}}));
     // Updates wait for existing app windows to close. Do not take over a live
     // session while a native file picker (or music playback) is in progress.
   })());
@@ -83,6 +85,8 @@ self.addEventListener('message',event=>{
     const cache=await caches.open(VERSION);
     if(event.data.type==='REPAIR_OFFLINE')try{await cacheShell(cache,true);}catch{}
     const cached=await Promise.all(SHELL.map(path=>cache.match(absolute(path))));
-    event.ports[0]?.postMessage({ready:cached.every(Boolean),version:VERSION});
+    const installed=await cache.match(absolute('./.installed-release'));
+    const updated=installed?!!(await installed.json()).updated:false;
+    event.ports[0]?.postMessage({ready:cached.every(Boolean),version:VERSION,updated});
   })());
 });
