@@ -1,3 +1,4 @@
+import { createEnhancements } from './enhancements.js';
 import * as db from './storage.js';
 import { PlayQueue } from './core.js';
 import { createContext } from './context.js';
@@ -16,6 +17,7 @@ Object.assign(context.importer, createImport(context));
 Object.assign(context.playlists, createPlaylists(context));
 Object.assign(context.playback, createPlayback(context));
 Object.assign(context.offline, createOffline(context));
+context.enhancements = createEnhancements(context);
 const { state, audio, main, trackArray } = context;
 const { paintIcons, readRoute, header, toast } = context.ui;
 const { loadTrack } = context.playback;

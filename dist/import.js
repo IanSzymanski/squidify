@@ -15,7 +15,7 @@ export function createImport(context) {
     for await(const entry of handle.values()) {
       const next=path?`${path}/${entry.name}`:entry.name;
       if(entry.kind==='directory')yield*walkFolder(entry,next);
-      else if(isAudio({name:entry.name,type:''}))yield{file:await entry.getFile(),path:next};
+      else yield{file:await entry.getFile(),path:next};
     }
   }
   async function chooseFolder() {
@@ -56,41 +56,56 @@ export function createImport(context) {
     state.busy=true;state.stopImport=false;modal.close();
     const banner=$('#importBanner'),progress=$('#importProgress'),text=$('#importText');banner.hidden=false;progress.removeAttribute('value');
     text.textContent='Reading your music…';
-    let added=0,skipped=0,failed=0,total=0,quota=false,firstTrack=null;
+    let added=0,skipped=0,unsupported=0,failed=0,total=0,quota=false,firstTrack=null;const files=[];
     try {
       // A persistence request is advisory; only successful IndexedDB commits count as saved songs.
       navigator.storage?.persist?.().catch(()=>false);
       for await(const entry of entries) {
         if(state.stopImport)break;
         const file=entry.file||entry;
-        if(!isAudio(file)){skipped++;continue;}
+        if(!isAudio(file)){unsupported++;files.push({name:file.name,reason:'Unsupported file type'});continue;}
         total++;text.textContent=`Saving ${file.name} · ${added} added`;
         try {
           const id=await fingerprint(file);
-          if(state.tracks.has(id)){skipped++;continue;}
+          if(state.tracks.has(id)){skipped++;files.push({name:file.name,reason:'Duplicate — already in your library'});continue;}
+          if(audio.canPlayType && !audio.canPlayType(mimeFor(file))){unsupported++;files.push({name:file.name,reason:'Audio format is not supported by this browser'});continue;}
+          const check=await validateAudio(file);
+          if(!check.ok){failed++;files.push({name:file.name,reason:check.reason});continue;}
           const path=entry.path||file.webkitRelativePath||file.name;
           const tags=await readMetadata(file,path);
-          const track={...tags,id,name:file.name,path,folderId,size:file.size,mime:mimeFor(file),addedAt:Date.now(),liked:false};
+          const track={...tags,duration:check.duration||tags.duration,id,name:file.name,path,folderId,size:file.size,mime:mimeFor(file),addedAt:Date.now(),liked:false};
           const blob=new Blob([file],{type:track.mime});
           await db.saveTrack(track,blob);
           state.tracks.set(id,track);added++;firstTrack ||= id;
           if(!track.duration)metadataJobs.push({id,blob});
           if(added%8===0){render();await new Promise(resolve=>setTimeout(resolve,0));}
-        } catch(e){if(e.name==='QuotaExceededError'){quota=true;break;}failed++;console.error('Import failed',file.name,e);}
+        } catch(e){if(e.name==='QuotaExceededError'){quota=true;files.push({name:file.name,reason:'Storage is full — this file and remaining files were not saved'});break;}failed++;files.push({name:file.name,reason:'Could not read or save this file'});console.error('Import failed',file.name,e);}
       }
-    }catch(e){failed++;console.error('Folder read interrupted',e);}
+    }catch(e){failed++;files.push({name:'Folder import',reason:'Folder access was interrupted. Files already saved were kept; remaining files were not read.'});console.error('Folder read interrupted',e);}
     finally{
       state.busy=false;banner.hidden=true;state.storage=await db.storageInfo();render();
       if(firstTrack&&!state.queue.current){state.queue.start(trackArray().map(t=>t.id),firstTrack,state.tracks,'Your library');await loadTrack(firstTrack,false);}
       let message=`${plural(added,'song')} saved`;
-      if(skipped)message+=` · ${skipped} duplicate or non-audio file${skipped===1?'':'s'} skipped`;
+      if(skipped)message+=` · ${skipped} duplicate${skipped===1?'':'s'} skipped`;
+      if(unsupported)message+=` · ${unsupported} unsupported`;
       if(failed)message+=` · ${failed} could not be read`;
       if(state.stopImport)message+=' · import stopped';
       if(quota)message+=' · storage is full';
-      toast(message+'.',quota||!!failed);
+      state.importReport={summary:message+'.',files};
+      toast(message+'.'+(files.length?' See Import results in Add music.':''),quota||!!failed||!!unsupported,7000);
       if(!total&&!added&&!failed&&!skipped)toast('No audio files found in that folder.');
       runDurationJobs();saveSession();
     }
+  }
+  async function validateAudio(file) {
+    // Metadata decoding catches corrupt/unsupported codecs before committing a copy.
+    return new Promise(resolve=>{
+      const probe=new Audio(),url=URL.createObjectURL(file);let done=false;
+      const finish=result=>{if(done)return;done=true;clearTimeout(timer);probe.onloadedmetadata=null;probe.onerror=null;probe.removeAttribute('src');probe.load();URL.revokeObjectURL(url);resolve(result);};
+      const timer=setTimeout(()=>finish({ok:false,reason:'Audio validation timed out — try importing this file again'}),5000);
+      probe.preload='metadata';probe.onloadedmetadata=()=>finish({ok:true,duration:Number.isFinite(probe.duration)?probe.duration:undefined});
+      probe.onerror=()=>finish({ok:false,reason:'Unreadable audio or a codec this browser cannot play'});probe.src=url;probe.load();
+    });
   }
   async function probeDuration(blob) {
     return new Promise(resolve=>{

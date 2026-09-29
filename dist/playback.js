@@ -48,7 +48,7 @@ export function createPlayback(context) {
       priming=false;activeId=id;audio.src=url;
       const restore=()=>{if(generation===playGeneration&&restoreTime>0&&Number.isFinite(audio.duration))audio.currentTime=Math.min(restoreTime,Math.max(0,audio.duration-0.5));};
       audio.addEventListener('loadedmetadata',restore,{once:true});
-      audio.load();renderPlayer();if(nowDialog.open)renderNowPlaying();highlightCurrent();if(!$('#queuePanel').hidden)renderQueue();updateMediaSession();saveSession();
+      audio.load();context.enhancements?.loadWave(id);renderPlayer();if(nowDialog.open)renderNowPlaying();highlightCurrent();if(!$('#queuePanel').hidden)renderQueue();updateMediaSession();saveSession();
       if(playIntent){try{await audio.play();}catch(e){if(generation===playGeneration&&e.name!=='AbortError'){playIntent=false;toast(e.name==='NotAllowedError'?'Tap Play to start listening.':'This browser could not play this audio format. Try MP3 or AAC/M4A.',true);}}}
       const next=state.queue.order[state.queue.index+1];if(next)mediaURL(next).catch(()=>{});
     }catch(e){if(generation!==playGeneration)return;priming=false;playIntent=false;audio.pause();toast(e.message||'Could not load this song. Import it again.',true);}
@@ -58,7 +58,7 @@ export function createPlayback(context) {
     const list=currentList();if(!list.length)return addMusicDialog();
     if(shuffle)state.queue.shuffle=true;
     const id=startId || (state.queue.shuffle?list[Math.floor(Math.random()*list.length)].id:list[0].id);
-    state.queue.start(list.map(t=>t.id),id,state.tracks,contextName());loadTrack(id,true);
+    state.queue.start(list.map(t=>t.id),id,state.tracks,contextName());state.queue.playlistId=state.view==='playlist'?state.detail:null;loadTrack(id,true);
   }
   async function togglePlay() {
     if(!state.tracks.size)return addMusicDialog();
@@ -71,11 +71,11 @@ export function createPlayback(context) {
   function nextTrack(manual=true) {
     const id=state.queue.next(state.tracks,manual);
     if(!id){playIntent=false;audio.pause();renderPlayer();saveSession();return;}
-    loadTrack(id,true);
+    context.ui.motion?.pulse();loadTrack(id,true);
   }
   function previousTrack(restart=true) {
     if(restart&&audio.currentTime>3){audio.currentTime=0;updateProgress();return;}
-    const id=state.queue.previous();if(id)loadTrack(id,true);
+    const id=state.queue.previous();if(id){context.ui.motion?.pulse();loadTrack(id,true);}
   }
   function toggleShuffle() {
     state.queue.setShuffle(!state.queue.shuffle,state.tracks);saveSession();renderPlayer();if(!$('#queuePanel').hidden)renderQueue();
@@ -88,8 +88,9 @@ export function createPlayback(context) {
     if(!('mediaSession' in navigator))return;
     const t=byId(state.queue.current);if(!t)return;
     try{
-      const art=ui.artworkURL(t);
-      navigator.mediaSession.metadata=new MediaMetadata({title:t.title,artist:t.artist,album:t.album,artwork:art?[{src:art,type:t.artwork.type}]:[{src:new URL('./icon-512-v6.png',location.href).href,sizes:'512x512',type:'image/png'}]});
+      const cover=ui.mediaArtwork?.();
+      const art=cover?.src||ui.artworkURL(t);
+      navigator.mediaSession.metadata=new MediaMetadata({title:t.title,artist:t.artist,album:t.album,artwork:art?[{src:art,type:cover?.type||t.artwork?.type}]:[{src:new URL('./icon-512-v6.png',location.href).href,sizes:'512x512',type:'image/png'}]});
     }catch{}
   }
   function updatePositionState() {

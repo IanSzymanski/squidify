@@ -43,7 +43,7 @@ export function bindGestures({ document, window, run, openMenu, nowDialog }) {
       else if (Math.abs(g.dy) > Math.abs(g.dx) * 1.25) g.axis = 'y';
       else return;
     }
-    if (g.axis === 'y' && (g.kind === 'item' || (g.kind === 'full' && !g.top))) { reset(); return; }
+    if (g.axis === 'y' && g.kind === 'item') { reset(); return; }
     // A playlist's horizontal movement is not a playback or queue gesture.
     if (g.axis === 'x' && g.item && !g.item.dataset.trackRow) { reset(); return; }
     if (event.cancelable) event.preventDefault();
@@ -64,7 +64,7 @@ export function bindGestures({ document, window, run, openMenu, nowDialog }) {
       else action = [g.dx < 0 ? 'next' : 'gesture-previous'];
     } else if (!g.held && g.axis === 'y' && Math.abs(g.dy) >= 64) {
       if (g.kind === 'player' && g.dy < 0) action = ['now-playing'];
-      if (g.kind === 'full' && g.top && g.dy > 0) action = ['close-now'];
+      if (g.kind === 'full' && g.dy > 0) action = ['close-now'];
     }
     reset();
     if (action) run(...action);

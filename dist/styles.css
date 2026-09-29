@@ -71,3 +71,61 @@ body{background:var(--bg)}
 }
 @media(prefers-reduced-motion:reduce){.fold-sheet,.fold-glint{animation:none!important}.route-wash{display:none!important}}
 html.page-hidden .fold-sheet,html.page-hidden .fold-glint{animation-play-state:paused}
+
+/* Design system v1: primary = commit/play, outlined = secondary action,
+   quiet/ghost = contextual action, icon = utility, danger = destructive. */
+@font-face{font-family:'Bricolage Grotesque';font-style:normal;font-weight:700;src:url('./bricolage-700.ttf') format('truetype');font-display:swap}
+@font-face{font-family:'Bricolage Grotesque';font-style:normal;font-weight:800;src:url('./bricolage-800.ttf') format('truetype');font-display:swap}
+:root{--radius-control:10px;--radius-panel:16px;--control-height:44px;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+h1,h2,h3,.brand,.mobile-brand{font-family:'Bricolage Grotesque',system-ui,sans-serif;font-weight:700}
+.brand,.mobile-brand{font-weight:800;letter-spacing:-.05em}
+.button{min-height:var(--control-height);border:1px solid var(--line);border-radius:var(--radius-control);background:var(--panel);color:var(--text);font-size:14px}
+.button.primary{background:var(--mint);border-color:transparent;color:#071c18}
+.button.quiet{background:transparent;border-color:transparent;color:var(--text)}
+.button.quiet:hover{background:var(--hover)}
+.button.danger{color:var(--danger);border-color:#75464b;background:#291b23}
+.icon-button{min-width:44px;min-height:44px;border:0;background:transparent}
+.main-play{background:var(--mint);color:#071c18}
+.now-dialog .main-play{background:var(--mint);color:#071c18}
+.toast{position:fixed;inset:calc(env(safe-area-inset-top) + 74px) 20px auto auto;margin:0;transform:none;translate:none;width:max-content;max-width:min(390px,calc(100vw - 32px));padding:12px 16px;background:#171b29;color:#f4f5fb;-webkit-text-fill-color:#f4f5fb;font:14px/1.45 system-ui,sans-serif;border-radius:12px;pointer-events:none;z-index:150;overflow-wrap:anywhere}
+.toast.error{color:#fff1ee;border-left-color:var(--danger)}
+.toast::backdrop,.route-wash::backdrop{background:transparent;pointer-events:none}
+.route-wash{padding:0;margin:0;border:0;width:100vw;height:100dvh;max-width:none;max-height:none;background:transparent;color:inherit}
+#nowDialog{touch-action:none}
+#nowDialog input{touch-action:auto}
+.audio-wave{width:100px;height:28px;display:block;flex-shrink:0;opacity:.8}
+.mini-wave{width:40px;height:24px}
+.output-control{color:var(--muted)}
+.output-control.active{color:var(--mint)}
+.import-results{padding:0;list-style:none;max-height:50dvh;overflow:auto}
+.import-results li{display:grid;gap:4px;padding:12px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+.import-results span{color:var(--muted);font-size:14px}
+html,body{height:100%;overflow:hidden;overscroll-behavior:none}
+.app{height:100dvh;min-height:0;padding-bottom:var(--player)}
+.workspace{height:100%;min-height:0;display:flex;flex-direction:column}
+.topbar{position:relative;flex-shrink:0;padding-top:env(safe-area-inset-top);height:calc(90px + env(safe-area-inset-top))}
+main{flex:1;min-height:0;overflow-y:auto;overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch}
+@media(max-width:700px){
+ .app{height:100dvh;padding-bottom:calc(134px + env(safe-area-inset-bottom))}
+ .workspace{height:100%;min-height:0}
+ .topbar{height:auto;min-height:calc(68px + env(safe-area-inset-top));padding:calc(10px + env(safe-area-inset-top)) 18px 10px;flex-wrap:wrap;gap:8px}
+ .search-box{display:none;order:3;width:100%;margin:0}
+ body.search-visible .search-box{display:flex}
+ .mobile-brand{font-size:25px;letter-spacing:-.05em}
+ .top-actions{margin-left:auto;gap:5px}
+ .now-track{min-width:0;gap:7px}
+ .track-summary{min-width:0;flex:1}
+ .mini-wave{width:24px;height:22px}
+ #player .output-control{min-width:28px;width:28px;padding:3px}
+ #player .output-control .icon{width:17px;height:17px}
+ .toast{inset:calc(env(safe-area-inset-top) + 72px) 16px auto auto;max-width:calc(100vw - 32px);font-size:14px}
+ .now-dialog{overflow-y:auto}
+ .now-dialog .full-art{max-width:min(100%,34dvh);margin-bottom:20px}
+ .now-dialog .now-footer{margin-top:10px}
+ .settings-card p{font-size:14px}
+ .collection-actions{flex-wrap:wrap}
+}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}.audio-wave{opacity:.65}}
+
+#nowArtwork>.artwork{width:100%;height:100%;border-radius:inherit}
+@media(max-width:700px){.library-playlists .tile-menu{min-width:32px}.audio-wave{max-width:100%}}

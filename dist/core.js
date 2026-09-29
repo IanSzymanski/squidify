@@ -39,9 +39,11 @@ export class PlayQueue {
     this.shuffle = !!saved.shuffle;
     this.repeat = ['off', 'all', 'one'].includes(saved.repeat) ? saved.repeat : 'off';
     this.context = saved.context || 'Your library';
+    this.playlistId = saved.playlistId || null;
   }
   get current() { return this.order[this.index] || null; }
   start(ids, startId, tracks, context = 'Your library') {
+    this.playlistId = null;
     this.source = [...new Set(ids)];
     if (!this.source.length) { this.order = []; this.index = -1; return null; }
     const id = this.source.includes(startId) ? startId : this.source[0];
@@ -91,7 +93,7 @@ export class PlayQueue {
     this.order = this.order.filter(id => valid.has(id));
     this.index = current && valid.has(current) ? before : -1;
   }
-  toJSON() { return { source: this.source, order: this.order, index: this.index, shuffle: this.shuffle, repeat: this.repeat, context: this.context }; }
+  toJSON() { return { source: this.source, order: this.order, index: this.index, shuffle: this.shuffle, repeat: this.repeat, context: this.context, playlistId: this.playlistId }; }
 }
 
 export function formatTime(seconds) {

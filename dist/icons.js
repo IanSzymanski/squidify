@@ -1,5 +1,7 @@
 // Vendored Lucide 1.8.0 SVG nodes. See LUCIDE-LICENSE.txt.
 const paths = {
+  "bluetooth": '<path d="m7 7 10 10-5 5V2l5 5L7 17"/>',
+  "vertical": '<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>',
   "library": "<path d=\"m16 6 4 14\"/><path d=\"M12 6v14\"/><path d=\"M8 8v12\"/><path d=\"M4 4v16\"/>",
   "search": "<path d=\"m21 21-4.34-4.34\"/><circle cx=\"11\" cy=\"11\" r=\"8\"/>",
   "heart": "<path d=\"M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5\"/>",
@@ -21,7 +23,7 @@ const paths = {
   "down": "<path d=\"m6 9 6 6 6-6\"/>",
   "check": "<path d=\"M20 6 9 17l-5-5\"/>",
   "download": "<path d=\"M12 15V3\"/><path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\"/><path d=\"m7 10 5 5 5-5\"/>",
-  "settings": "<path d=\"M14 17H5\"/><path d=\"M19 7h-9\"/><circle cx=\"17\" cy=\"17\" r=\"3\"/><circle cx=\"7\" cy=\"7\" r=\"3\"/>",
+  "settings": '<path d="m9 3 1-1h4l1 1v2l2 1 2-1 2 3v2l-2 1v2l2 1v2l-2 3-2-1-2 1v2l-1 1h-4l-1-1v-2l-2-1-2 1-2-3v-2l2-1v-2l-2-1V8l2-3 2 1 2-1z"/><circle cx="12" cy="12" r="3"/>',
   "list": "<path d=\"M3 5h.01\"/><path d=\"M3 12h.01\"/><path d=\"M3 19h.01\"/><path d=\"M8 5h13\"/><path d=\"M8 12h13\"/><path d=\"M8 19h13\"/>",
   "album": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M6 12c0-1.7.7-3.2 1.8-4.2\"/><circle cx=\"12\" cy=\"12\" r=\"2\"/><path d=\"M18 12c0 1.7-.7 3.2-1.8 4.2\"/>",
   "clock": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M12 6v6h4\"/>",

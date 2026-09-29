@@ -58,3 +58,5 @@ export async function storageInfo() {
   const persistent = await navigator.storage?.persisted?.().catch(() => false) || false;
   return { ...estimate, persistent };
 }
+// Album cover updates are atomic: quota failures preserve every previous cover.
+export const putTracks = tracks => operation(['tracks'], 'readwrite', tx => {for(const track of tracks)tx.objectStore('tracks').put(track);});

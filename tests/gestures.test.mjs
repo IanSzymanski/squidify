@@ -33,10 +33,10 @@ function fixture(t) {
   const swipe=(node,dx,dy)=>{emit('pointerdown',node);emit('pointermove',node,100+dx,100+dy);emit('pointerup',node,100+dx,100+dy);};
   return {target,emit,swipe,calls,menus};
 }
-test('mini-player opens upwards; top of full player closes downwards',t=>{
+test('mini-player opens upwards; whole full player closes downwards',t=>{
   const f=fixture(t);f.swipe(f.target('player'),0,-90);f.swipe(f.target('top'),0,90);
   assert.deepEqual(f.calls,[['now-playing'],['close-now']]);
-  f.swipe(f.target('full'),0,90);assert.equal(f.calls.length,2,'vertical scrolling below header must not dismiss');
+  f.swipe(f.target('full'),0,90);assert.equal(f.calls.length,3,'downward swipe below header dismisses');
 });
 test('horizontal player swipes skip next/previous and consume the synthetic click',t=>{
   const f=fixture(t),player=f.target('player');

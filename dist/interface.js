@@ -24,8 +24,8 @@ export function createInterface(context) {
 
   function toast(message, error = false, duration) {
     clearTimeout(toastTimer);
-    const el = $('#toast'); el.textContent = message; el.classList.toggle('error', error); el.hidden = false;
-    toastTimer = setTimeout(() => { el.hidden = true; }, duration || (error ? 6500 : 4500));
+    const el = $('#toast'); el.textContent = message; el.classList.toggle('error', error); el.hidden = false;try{el.showPopover?.();}catch{}
+    toastTimer = setTimeout(() => { el.hidden = true;try{el.hidePopover?.();}catch{} }, duration || (error ? 6500 : 4500));
   }
   function report(error, fallback = 'Something went wrong. Please try again.') {
     if (error?.name === 'AbortError') return;
@@ -45,6 +45,7 @@ export function createInterface(context) {
     return `<span class="artwork ${extra}">${url ? `<img src="${url}" alt="" loading="lazy">` : icon(fallback)}</span>`;
   }
   function collectionArt(p, extra = '') {
+    if(p?.artwork)return artwork({...p,id:'playlist:'+p.id},extra);
     // Stable per-playlist folds: different covers without saved image blobs.
     let seed=0;for(const char of p?.id||'playlist')seed=(Math.imul(seed,31)+char.charCodeAt(0))>>>0;
     const angle=seed%360,delay=-(seed%190)/10,duration=16+seed%13;
@@ -63,15 +64,15 @@ export function createInterface(context) {
     const nextKey=view+'/'+detail;
     const commit=()=>{
       state.view=view;state.detail=detail;state.search='';$('#searchInput').value='';
-      render();window.scrollTo({top:0});routeKey=nextKey;
+      document.body.dataset.view=view;document.body.classList.remove('search-visible');render();main.scrollTop=0;window.scrollTo({top:0});routeKey=nextKey;
     };
-    motion.change(commit,!state.pickerOpen && nextKey!==routeKey);
+    motion.change(commit,!state.pickerOpen && nextKey!==routeKey && ['playlist','album'].includes(view));
   }
   function currentList() {
     let list;
     if (state.search) {
       const query = state.search.toLowerCase().trim();
-      list = trackArray().filter(t => `${t.title} ${t.artist} ${t.album} ${t.name}`.toLowerCase().includes(query));
+      list = (state.view==='playlist' ? (playlist(state.detail)?.trackIds||[]).map(byId).filter(Boolean) : trackArray()).filter(t => `${t.title} ${t.artist} ${t.album} ${t.name}`.toLowerCase().includes(query));
     } else if (state.view === 'liked') list = trackArray().filter(t => t.liked);
     else if (state.view === 'playlist') list = (playlist(state.detail)?.trackIds || []).map(byId).filter(Boolean);
     else if (state.view === 'album') list = trackArray().filter(t => albumKey(t) === state.detail).sort((a,b)=>(parseInt(a.trackNumber)||999)-(parseInt(b.trackNumber)||999)||a.title.localeCompare(b.title));
@@ -106,10 +107,10 @@ export function createInterface(context) {
     return `<table class="track-table"><thead><tr><th class="num">#</th><th class="title-col">Title</th><th class="album-col">Album</th><th class="like-col"><span class="sr-only">Liked</span></th><th class="duration-col" aria-label="Duration">${icon('clock')}</th><th class="more-col"><span class="sr-only">Actions</span></th></tr></thead><tbody>${list.map((t,i)=>`<tr data-track-row="${t.id}" class="${state.queue.current===t.id?'current':''}"><td class="number-cell"><button class="number-button" data-action="play-track" data-id="${t.id}" aria-label="Play ${esc(t.title)}">${state.queue.current===t.id?icon(!audio.paused?'pause':'play'):i+1}</button></td><td><button class="track-cell" data-action="play-track" data-id="${t.id}">${artwork(t)}<span class="track-text"><span class="song-title">${esc(t.title)}</span><span class="song-artist">${esc(t.artist)}</span></span></button></td><td class="album-cell"><button class="album-text" data-view="album" data-id="${esc(albumKey(t))}">${esc(t.album)}</button></td><td class="table-like"><button class="icon-button like-button ${t.liked?'liked':''}" data-action="like" data-id="${t.id}" aria-label="${t.liked?'Unlike':'Like'} ${esc(t.title)}" aria-pressed="${!!t.liked}">${icon('heart')}</button></td><td class="duration-cell" data-duration-id="${t.id}">${formatTime(t.duration)}</td><td><button class="icon-button" data-action="track-menu" data-id="${t.id}" aria-label="Actions for ${esc(t.title)}">${icon('more')}</button></td></tr>`).join('')}</tbody></table>`;
   }
   function emptyLibrary() {
-    return `<section class="empty-library"><div class="empty-icon">${icon('folder')}</div><h2>Your music belongs here.</h2><p>Connect a folder or choose audio files to start your own offline library.</p><div class="actions-row"><button class="button primary" data-action="choose-folder">${icon('folder')}Choose a folder</button><button class="button" data-action="choose-files">${icon('plus')}Choose files</button></div><p class="empty-footer">${icon('shield')}Music stays on your device. No uploads. No account for your music.</p></section>`;
+    return `<section class="empty-library"><div class="empty-icon">${icon('folder')}</div><h2>Your music belongs here.</h2><p>Connect a folder or choose audio files to start your library.</p><div class="actions-row"><button class="button primary" data-action="choose-folder">${icon('folder')}Choose a folder</button><button class="button" data-action="choose-files">${icon('plus')}Choose files</button></div><p class="empty-footer">${icon('shield')}Music stays on your device. No uploads. No account for your music.</p></section>`;
   }
   function playlistTiles() {
-    return state.playlists.map(p=>`<div class="playlist-tile" data-playlist-id="${esc(p.id)}"><button class="collection-card" data-view="playlist" data-id="${esc(p.id)}">${collectionArt(p)}<strong>${esc(p.name)}</strong><small>${plural(p.trackIds.length,'song')}</small></button><button class="icon-button tile-menu" data-action="playlist-menu" data-id="${esc(p.id)}" aria-label="Options for ${esc(p.name)}">${icon('more')}</button></div>`).join('');
+    return state.playlists.map(p=>`<div class="playlist-tile" data-playlist-id="${esc(p.id)}"><button class="collection-card" data-view="playlist" data-id="${esc(p.id)}">${collectionArt(p)}<strong>${esc(p.name)}</strong><small>${plural(p.trackIds.length,'song')}</small></button><button class="icon-button tile-menu" data-action="playlist-menu" data-id="${esc(p.id)}" aria-label="Options for ${esc(p.name)}">${icon('vertical')}</button></div>`).join('');
   }
   function positionMenu(anchor) {
     if (!anchor?.getBoundingClientRect) return;
@@ -133,7 +134,7 @@ export function createInterface(context) {
       const albums=new Map(); for(const t of list){ const key=albumKey(t); if(!albums.has(key))albums.set(key,[]);albums.get(key).push(t); }
       return html+`<div class="grid">${[...albums].sort((a,b)=>a[1][0].album.localeCompare(b[1][0].album)).map(([key,ts])=>`<button class="collection-card" data-view="album" data-id="${esc(key)}">${artwork(ts.find(t=>t.artwork)||ts[0],'','album')}<strong>${esc(ts[0].album)}</strong><small>${esc(ts[0].artist)} · ${plural(ts.length,'song')}</small></button>`).join('')}</div>`;
     }
-    html+=`<div class="collection-actions"><button class="play-circle" data-action="play-view" aria-label="Play library">${icon('play')}</button><button class="button quiet" data-action="shuffle-view">${icon('shuffle')}Shuffle</button><span class="small-note">Saved for offline listening</span></div>`;
+    html+=`<div class="collection-actions"><button class="play-circle" data-action="play-view" aria-label="Play library">${icon('play')}</button><button class="button quiet" data-action="shuffle-view">${icon('shuffle')}Shuffle</button></div>`;
     return html+trackRows(list);
   }
   function renderCollection() {
@@ -141,7 +142,7 @@ export function createInterface(context) {
     if(state.view==='playlist'&&!p) return header('Playlist not found','', 'YOUR MUSIC','new-playlist','Create playlist')+'<p class="view-meta">Choose another playlist from your library.</p>';
     const title=isLiked?'Liked songs':isAlbum?list[0]?.album||'Album':p.name;
     const art=isLiked?artwork(null,'lime','heart'):isAlbum?artwork(list.find(t=>t.artwork)||list[0],'','album'):collectionArt(p);
-    let html=`<div class="collection-header">${art}<div><p class="eyebrow">${isAlbum?'ALBUM':'PLAYLIST'}</p><h1>${esc(title)}</h1><p class="view-meta">${isAlbum?`<span>${esc(list[0]?.artist||'')}</span>`:''}<span>${plural(list.length,'song')}</span>${totalDuration(list)?`<span>${totalDuration(list)}</span>`:''}</p></div></div><div class="collection-actions"><button class="play-circle" data-action="play-view" aria-label="Play ${esc(title)}" ${!list.length?'disabled':''}>${icon('play')}</button><button class="icon-button shuffle-control ${state.queue.shuffle?'active':''}" data-action="shuffle-view" aria-label="Shuffle ${esc(title)}" ${!list.length?'disabled':''}>${icon('shuffle')}</button>${p?`<button class="button quiet" data-action="edit-playlist-tracks" data-id="${p.id}">${icon('plus')}Add songs</button><button class="icon-button" data-action="playlist-menu" data-id="${p.id}" aria-label="Playlist options">${icon('more')}</button>`:''}${isLiked&&list.length?sortControl():''}</div>`;
+    let html=`<div class="collection-header">${art}<div><p class="eyebrow">${isAlbum?'ALBUM':'PLAYLIST'}</p><h1>${esc(title)}</h1><p class="view-meta">${isAlbum?`<span>${esc(list[0]?.artist||'')}</span>`:''}<span>${plural(list.length,'song')}</span>${totalDuration(list)?`<span>${totalDuration(list)}</span>`:''}</p></div></div><div class="collection-actions"><button class="play-circle" data-action="play-view" aria-label="Play ${esc(title)}" ${!list.length?'disabled':''}>${icon('play')}</button><button class="icon-button shuffle-control ${state.queue.shuffle?'active':''}" data-action="shuffle-view" aria-label="Shuffle ${esc(title)}" ${!list.length?'disabled':''}>${icon('shuffle')}</button>${p?`<button class="button quiet" data-action="edit-playlist-tracks" data-id="${p.id}">${icon('plus')}Add songs</button><button class="icon-button" data-action="playlist-menu" data-id="${p.id}" aria-label="Playlist options">${icon('more')}</button>`:''}${p?`<button class="icon-button" data-action="search-toggle" aria-label="Search this playlist">${icon('search')}</button>`:''}${isAlbum?`<button class="button quiet" data-action="album-cover">Change cover</button>`:''}${isLiked&&list.length?sortControl():''}</div>`;
     if(list.length)return html+trackRows(list);
     return html+`<div class="empty-small"><h2>${isLiked?'Keep your favorites close.':'Make it your own.'}</h2><p>${isLiked?'Tap the heart on any song to save it here.':'Add songs from your library to this playlist.'}</p><button class="button ${p?'primary':'quiet'}" ${p?`data-action="edit-playlist-tracks" data-id="${p.id}"`:'data-view="library"'}>${p?'Add songs':'Browse your library'}</button></div>`;
   }
@@ -155,7 +156,7 @@ export function createInterface(context) {
   function render() {
     if(state.pickerOpen)return;
     if(!state.ready)return;
-    if(state.search || state.view==='library')main.innerHTML=renderLibrary();
+    if((state.search && state.view!=='playlist') || state.view==='library')main.innerHTML=renderLibrary();
     else if(['liked','playlist','album'].includes(state.view))main.innerHTML=renderCollection();
     else if(state.view==='playlists')main.innerHTML=renderPlaylists();
     else main.innerHTML=renderSettings();
@@ -172,7 +173,7 @@ export function createInterface(context) {
   const modalHead = title => `<div class="modal-head"><h2 id="modalTitle">${esc(title)}</h2><button class="icon-button" data-action="close-modal" aria-label="Close">${icon('close')}</button></div>`;
   function addMusicDialog() {
     if(state.busy)return toast('Finish the current import first.');
-    setModal(modalHead('Add your music')+`<p>Choose a local folder or audio files. Squidify saves a copy on this device for offline playback.</p><label for="fileInput">Audio files</label><div id="filePickerSlot"></div><label for="folderInput">Music folder</label>${'showDirectoryPicker' in window?`<button type="button" class="import-choice" data-action="choose-folder">${icon('folder')}<span><strong>Connect a folder</strong><small>Include songs in its subfolders</small></span></button>`:'<div id="folderPickerSlot"></div>'}<p class="small-note">If folder selection is unavailable, choose audio files instead. For offline importing, files must already be downloaded to this device.</p>`);
+    setModal(modalHead('Add your music')+`<p>Choose a folder or audio files.</p>${state.importReport?'<button class="button quiet" data-action="import-results">Import results</button>':''}<label for="fileInput">Audio files</label><div id="filePickerSlot"></div><label for="folderInput">Music folder</label>${'showDirectoryPicker' in window?`<button type="button" class="import-choice" data-action="choose-folder">${icon('folder')}<span><strong>Connect a folder</strong><small>Include songs in its subfolders</small></span></button>`:'<div id="folderPickerSlot"></div>'}<p class="small-note">MP3, AAC/M4A, WAV, FLAC, Ogg/Opus, AIFF, MP4 and WebM. Playback depends on your device’s codecs. Protected subscription downloads are not supported. Mixed imports keep valid songs and report skipped or unreadable files individually.</p>`);
     $('#filePickerSlot').append(fileInput);
     if(!('showDirectoryPicker' in window))$('#folderPickerSlot').append(folderInput);
   }
@@ -189,7 +190,7 @@ export function createInterface(context) {
     if(state.pickerOpen)return;
     const t=byId(state.queue.current),playing=!audio.paused&&!playback.isPriming();
     $('#nowTitle').textContent=t?.title||'Nothing playing yet';$('#nowArtist').textContent=t?.artist||'Choose something from your library';
-    const art=artwork(t);$('#nowArtwork').innerHTML=art.replace(/^<span[^>]+>/,'').replace(/<\/span>$/,'');
+    const art=playerArtwork(t);$('#nowArtwork').innerHTML=art;
     $('#playerLike').disabled=!t;$('#playerLike').classList.toggle('liked',!!t?.liked);$('#playerLike').setAttribute('aria-label',t?.liked?'Unlike current song':'Like current song');
     $$('[data-action="toggle-play"]').forEach(b=>{b.innerHTML=icon(playing?'pause':'play');b.setAttribute('aria-label',playing?'Pause':'Play');});
     $$('.shuffle-control').forEach(b=>{b.classList.toggle('active',state.queue.shuffle);b.setAttribute('aria-pressed',String(state.queue.shuffle));if(b.dataset.action==='shuffle')b.setAttribute('aria-label',state.queue.shuffle?'Disable balanced shuffle':'Enable balanced shuffle');});
@@ -209,7 +210,7 @@ export function createInterface(context) {
   }
   function renderNowPlaying() {
     const t=byId(state.queue.current);if(!t)return;
-    nowDialog.innerHTML=`<div class="now-top"><button class="icon-button" data-action="close-now" aria-label="Close now playing">${icon('down')}</button><p>${esc(state.queue.context)}</p><button class="icon-button" data-action="current-menu" aria-label="Song options">${icon('more')}</button></div>${artwork(t,'full-art')}<div class="full-title-row"><div><h2 id="fullTitle">${esc(t.title)}</h2><p>${esc(t.artist)}</p></div><button class="icon-button like-button ${t.liked?'liked':''}" data-action="like-current" aria-label="${t.liked?'Unlike':'Like'} song" aria-pressed="${!!t.liked}">${icon('heart')}</button></div><div class="scrubber"><span class="time elapsed">0:00</span><input data-seek type="range" min="0" max="100" step=".1" value="0" aria-label="Playback position"><span class="time duration">0:00</span></div><div class="playback-buttons"><button class="icon-button shuffle-control" data-action="shuffle" aria-label="Balanced shuffle">${icon('shuffle')}</button><button class="icon-button" data-action="previous" aria-label="Previous song">${icon('previous')}</button><button class="main-play" data-action="toggle-play" aria-label="Play">${icon('play')}</button><button class="icon-button" data-action="next" aria-label="Next song">${icon('next')}</button><button class="icon-button repeat-control" data-action="repeat" aria-label="Repeat off">${icon('repeat')}<b hidden>1</b></button></div><div class="now-footer"><span>${icon('download')}Saved on this device</span><button class="icon-button" data-action="queue" aria-label="Open queue">${icon('queue')}</button></div>`;
+    nowDialog.innerHTML=`<div class="now-top"><button class="icon-button" data-action="close-now" aria-label="Close now playing">${icon('down')}</button><p>${esc(state.queue.context)}</p><button class="icon-button" data-action="current-menu" aria-label="Song options">${icon('more')}</button></div>${playerArtwork(t,'full-art')}<div class="full-title-row"><div><h2 id="fullTitle">${esc(t.title)}</h2><p>${esc(t.artist)}</p></div><button class="icon-button like-button ${t.liked?'liked':''}" data-action="like-current" aria-label="${t.liked?'Unlike':'Like'} song" aria-pressed="${!!t.liked}">${icon('heart')}</button></div><div class="scrubber"><span class="time elapsed">0:00</span><input data-seek type="range" min="0" max="100" step=".1" value="0" aria-label="Playback position"><span class="time duration">0:00</span></div><div class="playback-buttons"><button class="icon-button shuffle-control" data-action="shuffle" aria-label="Balanced shuffle">${icon('shuffle')}</button><button class="icon-button" data-action="previous" aria-label="Previous song">${icon('previous')}</button><button class="main-play" data-action="toggle-play" aria-label="Play">${icon('play')}</button><button class="icon-button" data-action="next" aria-label="Next song">${icon('next')}</button><button class="icon-button repeat-control" data-action="repeat" aria-label="Repeat off">${icon('repeat')}<b hidden>1</b></button></div><div class="now-footer">${outputControl()}<canvas class="audio-wave" width="120" height="28" aria-label="Audio waveform"></canvas><button class="icon-button" data-action="queue" aria-label="Open queue">${icon('queue')}</button></div>`;
     renderPlayer();
   }
   function renderQueue() {
@@ -223,6 +224,7 @@ export function createInterface(context) {
   }
 
   function bindEvents(actions) {
+  let lastScroll=0;main.addEventListener('scroll',()=>{const y=main.scrollTop;if(y>lastScroll+3)document.body.classList.remove('search-visible');else if(y<lastScroll && y<45 && state.view!=='playlist')document.body.classList.add('search-visible');lastScroll=y;},{passive:true});
   bindGestures({ document, window, nowDialog,
     run: (name,id) => {
       if(name==='gesture-previous')return playback.previousTrack(false);
@@ -240,7 +242,7 @@ export function createInterface(context) {
       if(state.busy){event.preventDefault();toast('Finish the current import first.');return;}
       state.pickerOpen=true;return;
     }
-    const button=event.target.closest('[data-action],[data-view]');if(!button||button.disabled)return;
+    const button=event.target.closest('[data-action],[data-view]');if(!button){if(event.target.closest('#player')&&!event.target.closest('input'))actions['now-playing']();return;}if(button.disabled)return;
     event.preventDefault();
     if(button.dataset.view){route(button.dataset.view,button.dataset.id||'');return;}
     const action=actions[button.dataset.action];if(action)Promise.resolve(action(button)).catch(e=>report(e));
@@ -261,7 +263,7 @@ export function createInterface(context) {
     if(event.key==='ArrowLeft'){event.preventDefault();if(event.shiftKey)previousTrack();else if(audio.src)audio.currentTime=Math.max(0,audio.currentTime-5);}
     if(event.key.toLowerCase()==='s')toggleShuffle();
     if(event.key.toLowerCase()==='l')toggleLike(state.queue.current).catch(report);
-    if(event.key==='/'){event.preventDefault();$('#searchInput').focus();}
+    if(event.key==='/'){event.preventDefault();document.body.classList.add('search-visible');$('#searchInput').focus();}
   });
   window.addEventListener('hashchange',readRoute);
   window.addEventListener('online',renderOfflineBadge);window.addEventListener('offline',renderOfflineBadge);
@@ -277,12 +279,14 @@ export function createInterface(context) {
   'choose-folder':()=>chooseFolder(),
   'choose-files':()=>selectFiles(),
   'close-modal':()=>modal.close(),
-  'close-now':()=>nowDialog.close(),
+  'close-now':()=>motion.change(()=>nowDialog.close()),
+  'search-toggle':()=>{document.body.classList.toggle('search-visible');if(document.body.classList.contains('search-visible'))$('#searchInput').focus();},
+  'audio-output':()=>context.enhancements.chooseOutput(),
   'cancel-import':()=>{state.stopImport=true;},
   'track-menu':b=>trackMenu(b.dataset.id,b.anchor||b),
   'current-menu':()=>{nowDialog.close();trackMenu(state.queue.current);},
   'tab':b=>{state.tab=b.dataset.tab;render();},
-  'now-playing':()=>{if(!state.queue.current)return;renderNowPlaying();nowDialog.showModal();},
+  'now-playing':()=>{if(!state.queue.current)return;motion.change(()=>{renderNowPlaying();nowDialog.showModal();});},
   'queue':()=>{nowDialog.close();const panel=$('#queuePanel');panel.hidden=!panel.hidden;if(!panel.hidden){renderQueue();$('.panel-head button',panel).focus();}},
   'confirm-remove-track':b=>{const t=byId(b.dataset.id);if(!t)return;setModal(modalHead('Remove this song?')+`<p>Remove ${esc(t.title)} from Squidify and all its playlists? The original audio file will stay untouched.</p><div class="modal-actions"><button class="button" data-action="close-modal">Cancel</button><button class="button danger" data-action="remove-track" data-id="${t.id}">Remove song</button></div>`);},
   'persist':async()=>{const granted=await navigator.storage?.persist?.().catch(()=>false);state.storage=await db.storageInfo();render();toast(granted?'Storage protection granted.':"Your browser decides storage protection. Installing Squidify may help.");},
@@ -292,5 +296,8 @@ export function createInterface(context) {
 
   function artworkURL(t) { if(!t?.artwork)return undefined; if(!artworkURLs.has(t.id))artworkURLs.set(t.id,URL.createObjectURL(t.artwork)); return artworkURLs.get(t.id); }
 
-  return { toast, report, paintIcons, collectionArt, route, readRoute, currentList, contextName, header, render, setModal, modalHead, positionMenu, addMusicDialog, highlightCurrent, renderPlayer, updateProgress, renderNowPlaying, renderQueue, renderOfflineBadge, releaseArtwork, artworkURL, bindEvents, actions };
+  function outputControl(){return `<button class="icon-button output-control" data-action="audio-output" aria-label="Audio output — managed by your device" title="Audio output">${icon('bluetooth')}</button>`;}
+  function playerArtwork(t,extra=''){const p=playlist(state.queue.playlistId);return p?collectionArt(p,extra):artwork(t,extra);}
+  function mediaArtwork(){const p=playlist(state.queue.playlistId);return p?context.enhancements.playlistMediaArt(p):null;}
+  return { motion, outputControl, mediaArtwork, toast, report, paintIcons, collectionArt, route, readRoute, currentList, contextName, header, render, setModal, modalHead, positionMenu, addMusicDialog, highlightCurrent, renderPlayer, updateProgress, renderNowPlaying, renderQueue, renderOfflineBadge, releaseArtwork, artworkURL, bindEvents, actions };
 }
