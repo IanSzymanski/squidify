@@ -63,7 +63,7 @@ test('complete installed shell launches and serves all modules with the network 
   const w=await workerHarness();await w.lifecycle('install');await w.lifecycle('activate');assert.equal(w.claimed,false,'do not take over an open file picker');assert.equal(w.skipped,false,'updates wait for existing windows to close');
   w.setOffline(true);const count=w.networkCalls;
   assert.match(await (await w.request('/?home=1',true)).text(),/id="audio"/);
-  for(const path of ['app.js','context.js','interface.js','gestures.js','import.js','playlists.js','playback.js','offline.js','release.js','motion.js','styles.css','core.js','storage.js','metadata.js','icons.js','manifest.webmanifest','icon-192-v6.png','icon-512-v6.png','icon-maskable-v6.png','apple-touch-icon-v6.png','favicon-32-v6.png'])assert.equal((await w.request(path)).status,200,path);
+  for(const path of ['app.js','context.js','interface.js','gestures.js','import.js','playlists.js','playback.js','offline.js','release.js','motion.js','styles.css','core.js','storage.js','metadata.js','icons.js','manifest.webmanifest','icon-192-v8.png','icon-512-v8.png','icon-maskable-v8.png','apple-touch-icon-v8.png','favicon-32-v8.png'])assert.equal((await w.request(path)).status,200,path);
   assert.equal(w.networkCalls,count);assert.equal((await w.message('CHECK_OFFLINE')).ready,true);
   assert.equal(await w.request('https://other.example/analytics.js'),null);
 });
@@ -86,6 +86,6 @@ test('manifest and runtime files stay fully packaged without CDN dependencies',a
 test('worker reports an upgrade after replacing an older shell, including empty libraries',async()=>{
   const w=await workerHarness();w.stores.set('squidify-shell-v5',new Map());
   await w.lifecycle('install');await w.lifecycle('activate');
-  const result=await w.message('CHECK_OFFLINE');assert.equal(result.ready,true);assert.equal(result.updated,true);assert.equal(result.version,'squidify-shell-v7');
+  const result=await w.message('CHECK_OFFLINE');assert.equal(result.ready,true);assert.equal(result.updated,true);assert.equal(result.version,'squidify-shell-v8');
   const fresh=await workerHarness();await fresh.lifecycle('install');await fresh.lifecycle('activate');assert.equal((await fresh.message('CHECK_OFFLINE')).updated,false);
 });

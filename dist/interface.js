@@ -1,4 +1,4 @@
-import { createMotion } from './motion.js';
+import { createMotion, createSearchScroll, createPlayerMotion } from './motion.js';
 import { bindGestures } from './gestures.js';
 import * as db from './storage.js';
 import { formatTime, formatBytes, escapeHTML as esc } from './core.js';
@@ -7,7 +7,8 @@ import { icon, mark } from './icons.js';
 export function createInterface(context) {
   const { $, $$, main, audio, modal, nowDialog, fileInput, folderInput, state, isIOS, standalone, trackArray, byId, playlist, plural, totalDuration } = context;
   const playback = context.playback;
-  const motion = createMotion(main, $('#routeWash'));
+  const motion = createMotion(main);
+  const searchScroll=createSearchScroll(),playerMotion=createPlayerMotion(nowDialog);
   let routeKey;
   const toggleLike = (...args) => context.playlists.toggleLike(...args);
   const chooseFolder = (...args) => context.importer.chooseFolder(...args);
@@ -64,9 +65,9 @@ export function createInterface(context) {
     const nextKey=view+'/'+detail;
     const commit=()=>{
       state.view=view;state.detail=detail;state.search='';$('#searchInput').value='';
-      document.body.dataset.view=view;document.body.classList.remove('search-visible');render();main.scrollTop=0;window.scrollTo({top:0});routeKey=nextKey;
+      searchScroll.reset();document.body.dataset.view=view;document.body.classList.remove('search-visible');render();main.scrollTop=0;window.scrollTo({top:0});routeKey=nextKey;
     };
-    motion.change(commit,!state.pickerOpen && nextKey!==routeKey && ['playlist','album'].includes(view));
+    motion.change(commit);
   }
   function currentList() {
     let list;
@@ -224,7 +225,7 @@ export function createInterface(context) {
   }
 
   function bindEvents(actions) {
-  let lastScroll=0;main.addEventListener('scroll',()=>{const y=main.scrollTop;if(y>lastScroll+3)document.body.classList.remove('search-visible');else if(y<lastScroll && y<45 && state.view!=='playlist')document.body.classList.add('search-visible');lastScroll=y;},{passive:true});
+  main.addEventListener('scroll',()=>{const action=searchScroll.update(main.scrollTop,state.view==='playlist');if(action==='hide'&&document.activeElement!==$('#searchInput'))document.body.classList.remove('search-visible');if(action==='show')document.body.classList.add('search-visible');},{passive:true});
   bindGestures({ document, window, nowDialog,
     run: (name,id) => {
       if(name==='gesture-previous')return playback.previousTrack(false);
@@ -279,14 +280,14 @@ export function createInterface(context) {
   'choose-folder':()=>chooseFolder(),
   'choose-files':()=>selectFiles(),
   'close-modal':()=>modal.close(),
-  'close-now':()=>motion.change(()=>nowDialog.close()),
+  'close-now':()=>playerMotion.close(),
   'search-toggle':()=>{document.body.classList.toggle('search-visible');if(document.body.classList.contains('search-visible'))$('#searchInput').focus();},
   'audio-output':()=>context.enhancements.chooseOutput(),
   'cancel-import':()=>{state.stopImport=true;},
   'track-menu':b=>trackMenu(b.dataset.id,b.anchor||b),
   'current-menu':()=>{nowDialog.close();trackMenu(state.queue.current);},
-  'tab':b=>{state.tab=b.dataset.tab;render();},
-  'now-playing':()=>{if(!state.queue.current)return;motion.change(()=>{renderNowPlaying();nowDialog.showModal();});},
+  'tab':b=>{state.tab=b.dataset.tab;motion.change(render);},
+  'now-playing':()=>{if(!state.queue.current)return;playerMotion.open(renderNowPlaying);},
   'queue':()=>{nowDialog.close();const panel=$('#queuePanel');panel.hidden=!panel.hidden;if(!panel.hidden){renderQueue();$('.panel-head button',panel).focus();}},
   'confirm-remove-track':b=>{const t=byId(b.dataset.id);if(!t)return;setModal(modalHead('Remove this song?')+`<p>Remove ${esc(t.title)} from Squidify and all its playlists? The original audio file will stay untouched.</p><div class="modal-actions"><button class="button" data-action="close-modal">Cancel</button><button class="button danger" data-action="remove-track" data-id="${t.id}">Remove song</button></div>`);},
   'persist':async()=>{const granted=await navigator.storage?.persist?.().catch(()=>false);state.storage=await db.storageInfo();render();toast(granted?'Storage protection granted.':"Your browser decides storage protection. Installing Squidify may help.");},

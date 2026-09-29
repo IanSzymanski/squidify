@@ -3,10 +3,11 @@
 export function bindGestures({ document, window, run, openMenu, nowDialog }) {
   let active = null, holdTimer, suppressUntil = 0;
   const clearHold = () => { clearTimeout(holdTimer); holdTimer = undefined; };
-  const reset = () => {
+  const reset = (preserve = false) => {
     clearHold();
     if (active) {
-      active.surface.style.removeProperty('translate');
+      const offset=active.surface.style.translate;
+      if(!preserve){active.surface.style.removeProperty('translate');if(offset&&active.surface.animate&&!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)active.surface.animate([{translate:offset},{translate:'0 0'}],{duration:380,easing:'cubic-bezier(.22,1.2,.36,1)'});}
       active.surface.classList.remove('gesture-active', 'queue-ready');
     }
     active = null;
@@ -50,7 +51,7 @@ export function bindGestures({ document, window, run, openMenu, nowDialog }) {
     g.surface.setPointerCapture?.(event.pointerId);
     g.surface.classList.add('gesture-active');
     const amount = g.axis === 'x' ? g.dx : g.dy;
-    const offset = Math.max(-70, Math.min(70, amount * 0.55));
+    const offset = g.kind==='full'&&g.axis==='y'&&amount>0 ? amount*.85 : Math.max(-70, Math.min(70, amount * 0.55));
     g.surface.style.setProperty('translate', g.axis === 'x' ? `${offset}px 0` : `0 ${offset}px`);
     g.surface.classList.toggle('queue-ready', !!g.item && g.dx >= 64);
   }, { passive: false });
@@ -66,12 +67,12 @@ export function bindGestures({ document, window, run, openMenu, nowDialog }) {
       if (g.kind === 'player' && g.dy < 0) action = ['now-playing'];
       if (g.kind === 'full' && g.dy > 0) action = ['close-now'];
     }
-    reset();
+    reset(action?.[0]==='close-now');
     if (action) run(...action);
   });
-  document.addEventListener('pointercancel', reset);
+  document.addEventListener('pointercancel', () => reset());
   document.addEventListener('scroll', clearHold, true);
-  window.addEventListener('blur', reset);
+  window.addEventListener('blur', () => reset());
   document.addEventListener('visibilitychange', () => { if (document.hidden) reset(); });
   document.addEventListener('click', event => {
     if (Date.now() >= suppressUntil || event.detail === 0) return;

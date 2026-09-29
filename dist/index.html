@@ -9,9 +9,9 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Squidify">
   <link rel="manifest" href="./manifest.webmanifest">
-  <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon-v6.png">
-  <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32-v6.png">
-  <link rel="icon" type="image/png" sizes="192x192" href="./icon-192-v6.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon-v8.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32-v8.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="./icon-192-v8.png">
   <link rel="stylesheet" href="./styles.css">
   <title>Squidify — Your music</title>
 </head>
@@ -51,7 +51,6 @@
     <input id="fileInput" class="native-file-input" type="file" accept="audio/*,.mp3,.m4a,.aac,.flac,.wav,.ogg,.oga,.opus,.aiff,.aif,.mp4,.webm" aria-label="Choose audio files" multiple>
     <input id="folderInput" class="native-file-input" type="file" aria-label="Choose a music folder" webkitdirectory multiple>
   </div>
-  <div id="routeWash" popover="manual" class="route-wash" hidden aria-hidden="true"><svg viewBox="0 0 100 240" preserveAspectRatio="none"><defs><linearGradient id="washGradient" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#0eedb5"/><stop offset="1" stop-color="#ae00ff"/></linearGradient></defs><path class="wash-trail" d="M0 14 C30 8 65 20 100 12 L100 222 C66 230 30 218 0 226 Z" fill="#ae00ff"/><path d="M0 10 C32 4 67 16 100 8 L100 218 C66 226 30 214 0 222 Z" fill="url(#washGradient)"/></svg></div>
   <audio id="audio" preload="metadata" playsinline></audio>
   <noscript><div class="noscript">Squidify needs JavaScript to browse and play local music.</div></noscript>
   <script type="module" src="./app.js"></script>

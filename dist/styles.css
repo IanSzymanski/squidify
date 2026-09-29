@@ -59,9 +59,9 @@ body{background:var(--bg)}
 .sidebar-playlist .fold-glint,.playlist-picker .fold-glint{animation:none}
 @keyframes fold-drift{0%{transform:rotate(-12deg) scale(1.02) translate(-3%,-2%)}50%{transform:rotate(14deg) scale(1.17) translate(3%,1%)}100%{transform:rotate(-3deg) scale(1.04) translate(-1%,4%)}}
 @keyframes fold-light{from{translate:-8% 3%;opacity:.35}to{translate:8% -3%;opacity:.8}}
-.route-wash{position:fixed;inset:0;z-index:90;overflow:hidden;pointer-events:none}
-.route-wash svg{display:block;width:100%;height:240%;will-change:transform}
-.wash-trail{opacity:.6}
+
+
+
 @media(prefers-reduced-motion:no-preference){
  .brand,.mobile-brand{animation:shell-enter .45s ease-out backwards}
  .desktop-nav,.search-box{animation:shell-enter .45s .05s ease-out backwards}
@@ -69,7 +69,7 @@ body{background:var(--bg)}
  .player{animation:shell-enter .45s .18s ease-out backwards}
  @keyframes shell-enter{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}
 }
-@media(prefers-reduced-motion:reduce){.fold-sheet,.fold-glint{animation:none!important}.route-wash{display:none!important}}
+@media(prefers-reduced-motion:reduce){.fold-sheet,.fold-glint{animation:none!important}}
 html.page-hidden .fold-sheet,html.page-hidden .fold-glint{animation-play-state:paused}
 
 /* Design system v1: primary = commit/play, outlined = secondary action,
@@ -89,8 +89,8 @@ h1,h2,h3,.brand,.mobile-brand{font-family:'Bricolage Grotesque',system-ui,sans-s
 .now-dialog .main-play{background:var(--mint);color:#071c18}
 .toast{position:fixed;inset:calc(env(safe-area-inset-top) + 74px) 20px auto auto;margin:0;transform:none;translate:none;width:max-content;max-width:min(390px,calc(100vw - 32px));padding:12px 16px;background:#171b29;color:#f4f5fb;-webkit-text-fill-color:#f4f5fb;font:14px/1.45 system-ui,sans-serif;border-radius:12px;pointer-events:none;z-index:150;overflow-wrap:anywhere}
 .toast.error{color:#fff1ee;border-left-color:var(--danger)}
-.toast::backdrop,.route-wash::backdrop{background:transparent;pointer-events:none}
-.route-wash{padding:0;margin:0;border:0;width:100vw;height:100dvh;max-width:none;max-height:none;background:transparent;color:inherit}
+.toast::backdrop{background:transparent;pointer-events:none}
+
 #nowDialog{touch-action:none}
 #nowDialog input{touch-action:auto}
 .audio-wave{width:100px;height:28px;display:block;flex-shrink:0;opacity:.8}
@@ -129,3 +129,17 @@ main{flex:1;min-height:0;overflow-y:auto;overscroll-behavior-y:contain;-webkit-o
 
 #nowArtwork>.artwork{width:100%;height:100%;border-radius:inherit}
 @media(max-width:700px){.library-playlists .tile-menu{min-width:32px}.audio-wave{max-width:100%}}
+
+/* Quieter depth motion, with the brand mark in mint and punctuation in pink. */
+.brand,.mobile-brand{color:var(--mint)}
+.brand-period,.mobile-brand>span:last-child{color:var(--violet)}
+.brand-mark img,.mobile-brand [data-mark] img{border-radius:0;object-fit:contain}
+#nowDialog.gesture-active{will-change:translate}
+@media(prefers-reduced-motion:reduce){#nowDialog{animation:none!important;transition:none!important}}
+
+@media(prefers-reduced-motion:no-preference){
+ #nowDialog[open]::backdrop{animation:player-dim-in .58s ease both}
+ #nowDialog.player-closing::backdrop{animation:player-dim-out .42s ease both}
+ @keyframes player-dim-in{from{background:transparent}to{background:rgba(0,0,0,.7)}}
+ @keyframes player-dim-out{from{background:rgba(0,0,0,.7)}to{background:transparent}}
+}

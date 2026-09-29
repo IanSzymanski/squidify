@@ -1,22 +1,64 @@
-// Swaps commit under full coverage; entrance staggers start after the wash exits.
-// Playback is never delayed by decorative motion. Rapid repeats skip the wash.
-export function createMotion(main, overlay) {
-  let first=true,sequence=0,timer,finishTimer,wash,lastWash=0;
+// Modules rise into place; route and playback actions never wait on animation.
+export function createMotion(main) {
+  let entrances=[];
   const reduce=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
-  function reveal(){
-    if(reduce()||!main.animate)return;
-    [...main.querySelectorAll('.view-header,.collection-header,.section-heading,.playlist-tile,.toolbar,.collection-actions,.track-table tbody tr,.settings-card,.empty-library')].slice(0,16).forEach((el,i)=>el.animate([{opacity:0,transform:'translateY(5px)'},{opacity:1,transform:'translateY(0)'}],{duration:280,delay:Math.min(i*25,200),easing:'cubic-bezier(.2,.7,.2,1)',fill:'backwards'}));
+  function reveal(root=main){
+    entrances.forEach(a=>a.cancel());entrances=[];
+    if(reduce()||document.hidden)return;
+    const items=[...root.querySelectorAll('.view-header,.collection-header,.section-heading,.playlist-tile,.toolbar,.collection-actions,.track-table tbody tr,.settings-card,.empty-library')].slice(0,20);
+    items.forEach((el,i)=>{
+      if(!el.animate)return;
+      entrances.push(el.animate([
+        {opacity:0,transform:'translateY(26px) scale(.985)',filter:'blur(3px)'},
+        {opacity:1,transform:'translateY(0) scale(1)',filter:'blur(0)'}
+      ],{duration:650,delay:Math.min(i*38,304),easing:'cubic-bezier(.16,1,.3,1)',fill:'backwards'}));
+    });
   }
-  function hide(){if(overlay){overlay.hidden=true;try{overlay.hidePopover?.();}catch{}}}
-  function change(commit,allowWash=true){
-    const version=++sequence;clearTimeout(timer);clearTimeout(finishTimer);wash?.cancel();wash=null;hide();
-    const now=Date.now();
-    if(first||!allowWash||reduce()||!overlay?.querySelector?.('svg')?.animate||document.hidden||now-lastWash<750){first=false;commit();reveal();return;}
-    lastWash=now;overlay.hidden=false;try{overlay.showPopover?.();}catch{}
-    wash=overlay.querySelector('svg').animate([{transform:'translateY(48%)',offset:0},{transform:'translateY(-12%)',offset:.46},{transform:'translateY(-12%)',offset:.54},{transform:'translateY(-105%)',offset:1}],{duration:540,easing:'cubic-bezier(.45,0,.25,1)',fill:'forwards'});
-    timer=setTimeout(()=>{if(version===sequence)commit();},250);
-    finishTimer=setTimeout(()=>{if(version===sequence){hide();reveal();}},540);
+  function change(commit){commit();reveal();}
+  return {change,reveal};
+}
+
+// Clamp Safari's negative rubber-band scroll and require real downward travel
+// beyond the top zone before hiding a search field that just appeared.
+export function createSearchScroll(){
+  let last=0,down=0;
+  return {
+    reset(){last=0;down=0;},
+    update(raw,playlist=false){
+      const y=Math.max(0,raw),delta=y-last;last=y;
+      if(y<=48){down=0;return !playlist&&delta<0?'show':null;}
+      if(delta>0)down+=delta;else down=0;
+      if(down>=28){down=0;return 'hide';}
+      return null;
+    }
+  };
+}
+
+export function createPlayerMotion(dialog){
+  let animation,version=0;
+  const reduce=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function stop(){version++;animation?.cancel();animation=null;}
+  function open(render){
+    stop();dialog.classList?.remove('player-closing');const token=version;render();if(!dialog.open)dialog.showModal();
+    dialog.style.removeProperty('translate');
+    if(reduce()||!dialog.animate)return;
+    animation=dialog.animate([
+      {transform:'translateY(100%)',opacity:.6},
+      {transform:'translateY(-7px)',opacity:1,offset:.8},
+      {transform:'translateY(0)',opacity:1}
+    ],{duration:580,easing:'cubic-bezier(.18,.8,.24,1)',fill:'both'});
+    animation.finished.then(()=>{if(token===version){animation.cancel();animation=null;}}).catch(()=>{});
   }
-  function pulse(){change(()=>{},true);}
-  return {change,pulse};
+  function close(){
+    if(!dialog.open)return;
+    const offset=dialog.style.translate||'0 0';stop();dialog.classList?.add('player-closing');const token=version;
+    dialog.style.removeProperty('translate');
+    if(reduce()||!dialog.animate){dialog.close();return;}
+    // Continue from the finger's released position, never snap back to zero.
+    animation=dialog.animate([{translate:offset,opacity:1},{translate:'0 105%',opacity:.5}],{duration:420,easing:'cubic-bezier(.4,0,.2,1)',fill:'both'});
+    animation.finished.then(()=>{if(token===version){const finished=animation;dialog.close();finished?.cancel();animation=null;}}).catch(()=>{});
+  }
+  dialog.addEventListener('cancel',event=>{event.preventDefault();close();});
+  dialog.addEventListener('close',stop);
+  return {open,close};
 }

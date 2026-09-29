@@ -71,11 +71,11 @@ export function createPlayback(context) {
   function nextTrack(manual=true) {
     const id=state.queue.next(state.tracks,manual);
     if(!id){playIntent=false;audio.pause();renderPlayer();saveSession();return;}
-    context.ui.motion?.pulse();loadTrack(id,true);
+    loadTrack(id,true);
   }
   function previousTrack(restart=true) {
     if(restart&&audio.currentTime>3){audio.currentTime=0;updateProgress();return;}
-    const id=state.queue.previous();if(id){context.ui.motion?.pulse();loadTrack(id,true);}
+    const id=state.queue.previous();if(id){loadTrack(id,true);}
   }
   function toggleShuffle() {
     state.queue.setShuffle(!state.queue.shuffle,state.tracks);saveSession();renderPlayer();if(!$('#queuePanel').hidden)renderQueue();
@@ -90,7 +90,7 @@ export function createPlayback(context) {
     try{
       const cover=ui.mediaArtwork?.();
       const art=cover?.src||ui.artworkURL(t);
-      navigator.mediaSession.metadata=new MediaMetadata({title:t.title,artist:t.artist,album:t.album,artwork:art?[{src:art,type:cover?.type||t.artwork?.type}]:[{src:new URL('./icon-512-v6.png',location.href).href,sizes:'512x512',type:'image/png'}]});
+      navigator.mediaSession.metadata=new MediaMetadata({title:t.title,artist:t.artist,album:t.album,artwork:art?[{src:art,type:cover?.type||t.artwork?.type}]:[{src:new URL('./icon-512-v8.png',location.href).href,sizes:'512x512',type:'image/png'}]});
     }catch{}
   }
   function updatePositionState() {
