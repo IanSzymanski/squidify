@@ -226,7 +226,7 @@ export function createInterface(context) {
 
   function bindEvents(actions) {
   main.addEventListener('scroll',()=>{const action=searchScroll.update(main.scrollTop,state.view==='playlist');if(action==='hide'&&document.activeElement!==$('#searchInput'))document.body.classList.remove('search-visible');if(action==='show')document.body.classList.add('search-visible');},{passive:true});
-  bindGestures({ document, window, nowDialog,
+  bindGestures({ document, window, nowDialog, beginPlayerDrag:playerMotion.interrupt,
     run: (name,id) => {
       if(name==='gesture-previous')return playback.previousTrack(false);
       return Promise.resolve(actions[name]?.({dataset:{id}})).catch(report);

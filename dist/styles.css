@@ -130,16 +130,14 @@ main{flex:1;min-height:0;overflow-y:auto;overscroll-behavior-y:contain;-webkit-o
 #nowArtwork>.artwork{width:100%;height:100%;border-radius:inherit}
 @media(max-width:700px){.library-playlists .tile-menu{min-width:32px}.audio-wave{max-width:100%}}
 
-/* Quieter depth motion, with the brand mark in mint and punctuation in pink. */
+/* Quiet depth motion and a simple mint wordmark without punctuation. */
 .brand,.mobile-brand{color:var(--mint)}
-.brand-period,.mobile-brand>span:last-child{color:var(--violet)}
 .brand-mark img,.mobile-brand [data-mark] img{border-radius:0;object-fit:contain}
-#nowDialog.gesture-active{will-change:translate}
+#nowDialog.gesture-active{will-change:transform}
 @media(prefers-reduced-motion:reduce){#nowDialog{animation:none!important;transition:none!important}}
 
 @media(prefers-reduced-motion:no-preference){
- #nowDialog[open]::backdrop{animation:player-dim-in .58s ease both}
- #nowDialog.player-closing::backdrop{animation:player-dim-out .42s ease both}
- @keyframes player-dim-in{from{background:transparent}to{background:rgba(0,0,0,.7)}}
- @keyframes player-dim-out{from{background:rgba(0,0,0,.7)}to{background:transparent}}
+ #nowDialog[open]::backdrop{background:rgba(0,0,0,.7);opacity:var(--player-dim,1)}
+ #nowDialog.player-closing::backdrop{animation:player-dim-out .36s cubic-bezier(.2,.7,.3,1) both}
+ @keyframes player-dim-out{from{opacity:var(--player-exit-dim,1)}to{opacity:0}}
 }

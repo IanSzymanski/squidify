@@ -34,4 +34,4 @@ const paths = {
   "up": "<path d=\"m18 15-6-6-6 6\"/>"
 };
 export const icon = (name, cls='') => `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.music}</svg>`;
-export const mark = '<img src="./squid-mark-v8.png" width="32" height="32" alt="" draggable="false">';
+export const mark = '<img src="./squid-mark-v9.png" width="32" height="32" alt="" draggable="false">';

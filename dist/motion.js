@@ -35,11 +35,19 @@ export function createSearchScroll(){
 }
 
 export function createPlayerMotion(dialog){
-  let animation,version=0;
+  let animation,version=0,closing=false;
   const reduce=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
   function stop(){version++;animation?.cancel();animation=null;}
+  const currentTransform=()=>typeof getComputedStyle==='function'?getComputedStyle(dialog).transform:(dialog.style.transform||'translate3d(0,0,0)');
+  function interrupt(){
+    const transform=currentTransform();stop();closing=false;
+    dialog.style.transform=transform;
+    dialog.classList?.remove('player-closing');
+    const values=transform.match(/matrix(?:3d)?\(([^)]+)\)/)?.[1].split(',').map(Number);
+    return values ? values[values.length===16?13:5]||0 : 0;
+  }
   function open(render){
-    stop();dialog.classList?.remove('player-closing');const token=version;render();if(!dialog.open)dialog.showModal();
+    stop();closing=false;dialog.classList?.remove('player-closing');dialog.style.removeProperty('transform');dialog.style.setProperty('--player-dim','1');const token=version;render();if(!dialog.open)dialog.showModal();
     dialog.style.removeProperty('translate');
     if(reduce()||!dialog.animate)return;
     animation=dialog.animate([
@@ -50,15 +58,19 @@ export function createPlayerMotion(dialog){
     animation.finished.then(()=>{if(token===version){animation.cancel();animation=null;}}).catch(()=>{});
   }
   function close(){
-    if(!dialog.open)return;
-    const offset=dialog.style.translate||'0 0';stop();dialog.classList?.add('player-closing');const token=version;
+    if(!dialog.open||closing)return;
+    const offset=currentTransform();stop();closing=true;const token=version;
+    // Keep the same compositor property for dragging and settling. Persist the
+    // offscreen endpoint before closing so cancelling cannot expose a frame at 0.
+    dialog.style.transform=offset;
+    const dim=dialog.style.getPropertyValue?.('--player-dim')||'1';
+    dialog.style.setProperty('--player-exit-dim',dim);dialog.classList?.add('player-closing');
     dialog.style.removeProperty('translate');
     if(reduce()||!dialog.animate){dialog.close();return;}
-    // Continue from the finger's released position, never snap back to zero.
-    animation=dialog.animate([{translate:offset,opacity:1},{translate:'0 105%',opacity:.5}],{duration:420,easing:'cubic-bezier(.4,0,.2,1)',fill:'both'});
-    animation.finished.then(()=>{if(token===version){const finished=animation;dialog.close();finished?.cancel();animation=null;}}).catch(()=>{});
+    animation=dialog.animate([{transform:offset},{transform:'translate3d(0,110vh,0)'}],{duration:360,easing:'cubic-bezier(.2,.7,.3,1)',fill:'forwards'});
+    animation.finished.then(()=>{if(token===version){dialog.style.transform='translate3d(0,110vh,0)';dialog.close();stop();closing=false;}}).catch(()=>{});
   }
   dialog.addEventListener('cancel',event=>{event.preventDefault();close();});
-  dialog.addEventListener('close',stop);
-  return {open,close};
+  dialog.addEventListener('close',()=>{if(!dialog.open){stop();closing=false;}});
+  return {open,close,interrupt};
 }

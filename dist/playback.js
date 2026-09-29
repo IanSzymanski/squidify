@@ -90,7 +90,7 @@ export function createPlayback(context) {
     try{
       const cover=ui.mediaArtwork?.();
       const art=cover?.src||ui.artworkURL(t);
-      navigator.mediaSession.metadata=new MediaMetadata({title:t.title,artist:t.artist,album:t.album,artwork:art?[{src:art,type:cover?.type||t.artwork?.type}]:[{src:new URL('./icon-512-v8.png',location.href).href,sizes:'512x512',type:'image/png'}]});
+      navigator.mediaSession.metadata=new MediaMetadata({title:t.title,artist:t.artist,album:t.album,artwork:art?[{src:art,type:cover?.type||t.artwork?.type}]:[{src:new URL('./icon-512-v9.png',location.href).href,sizes:'512x512',type:'image/png'}]});
     }catch{}
   }
   function updatePositionState() {

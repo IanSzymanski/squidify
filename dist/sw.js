@@ -1,6 +1,6 @@
 /* Squidify caches only its own app shell. Audio is in device-local IndexedDB. */
-const VERSION = 'squidify-shell-v8';
-const SHELL = ['./','./index.html','./styles.css','./app.js','./context.js','./interface.js','./gestures.js','./import.js','./playlists.js','./playback.js','./offline.js','./release.js','./motion.js','./enhancements.js','./bricolage-700.ttf','./bricolage-800.ttf','./core.js','./storage.js','./metadata.js','./icons.js','./squid-mark-v8.png','./manifest.webmanifest','./icon-192-v8.png','./icon-512-v8.png','./icon-maskable-v8.png','./apple-touch-icon-v8.png','./favicon-32-v8.png'];
+const VERSION = 'squidify-shell-v9';
+const SHELL = ['./','./index.html','./styles.css','./app.js','./context.js','./interface.js','./gestures.js','./import.js','./playlists.js','./playback.js','./offline.js','./release.js','./motion.js','./enhancements.js','./bricolage-700.ttf','./bricolage-800.ttf','./core.js','./storage.js','./metadata.js','./icons.js','./squid-mark-v9.png','./manifest.webmanifest','./icon-192-v9.png','./icon-512-v9.png','./icon-maskable-v9.png','./apple-touch-icon-v9.png','./favicon-32-v9.png'];
 const absolute = path => new URL(path,self.registration.scope).href;
 const shellURLs = new Set(SHELL.map(absolute));
 const navigationPaths = new Set([new URL(absolute('./')).pathname,new URL(absolute('./index.html')).pathname]);

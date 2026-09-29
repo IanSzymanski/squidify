@@ -12,6 +12,6 @@ test('Safari negative rebound cannot hide search; deliberate downward travel can
 });
 test('playlist search never opens from scrolling and route resets clear momentum',()=>{const scroll=createSearchScroll();scroll.update(100,true);assert.equal(scroll.update(20,true),null);scroll.reset();assert.equal(scroll.update(0),null);});
 test('player stays open during dismissal and closes only when animation finishes',async t=>{
- env(t);let complete;let cancelled=0;const dialog={open:true,style:{translate:'0 84px',removeProperty(){this.translate='';}},addEventListener(){},close(){this.open=false;},animate(frames){assert.equal(frames[0].translate,'0 84px');return{finished:new Promise(r=>complete=r),cancel(){cancelled++;}};}};
- const motion=createPlayerMotion(dialog);motion.close();assert.equal(dialog.open,true);complete();await Promise.resolve();assert.equal(dialog.open,false);assert.equal(cancelled,1);
+ env(t);let complete;let cancelled=0,animations=0;const dialog={open:true,style:{transform:'translate3d(0,84px,0)',setProperty(){},removeProperty(){}},addEventListener(){},close(){assert.equal(this.style.transform,'translate3d(0,110vh,0)');this.open=false;},animate(frames,options){animations++;assert.equal(frames[0].transform,'translate3d(0,84px,0)');assert.equal(frames[1].opacity,undefined,'sheet must remain opaque');assert.equal(options.duration,360);return{finished:new Promise(r=>complete=r),cancel(){cancelled++;}};}};
+ const motion=createPlayerMotion(dialog);motion.close();motion.close();assert.equal(animations,1,'repeated dismissal must not restart animation');assert.equal(dialog.open,true);complete();await Promise.resolve();assert.equal(dialog.open,false);assert.equal(cancelled,1);
 });

@@ -1,13 +1,13 @@
 // Pointer gestures keep vertical list scrolling native. Only a completed gesture
 // consumes its following click; range inputs retain their normal drag behavior.
-export function bindGestures({ document, window, run, openMenu, nowDialog }) {
+export function bindGestures({ document, window, run, openMenu, nowDialog, beginPlayerDrag }) {
   let active = null, holdTimer, suppressUntil = 0;
   const clearHold = () => { clearTimeout(holdTimer); holdTimer = undefined; };
   const reset = (preserve = false) => {
     clearHold();
     if (active) {
-      const offset=active.surface.style.translate;
-      if(!preserve){active.surface.style.removeProperty('translate');if(offset&&active.surface.animate&&!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)active.surface.animate([{translate:offset},{translate:'0 0'}],{duration:380,easing:'cubic-bezier(.22,1.2,.36,1)'});}
+      const offset=active.surface.style.transform;
+      if(!preserve){active.surface.style.removeProperty('transform');if(active.kind==='full')active.surface.style.setProperty('--player-dim','1');if(offset&&active.surface.animate&&!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)active.surface.animate([{transform:offset},{transform:'translate3d(0,0,0)'}],{duration:380,easing:'cubic-bezier(.22,1.2,.36,1)'});}
       active.surface.classList.remove('gesture-active', 'queue-ready');
     }
     active = null;
@@ -27,7 +27,7 @@ export function bindGestures({ document, window, run, openMenu, nowDialog }) {
     if (item && button && !['play-track', 'queue-jump'].includes(button.dataset.action)) return;
     active = { surface, item, kind: item ? 'item' : full ? 'full' : 'player',
       pointer: event.pointerId, x: event.clientX, y: event.clientY, dx: 0, dy: 0,
-      top: !!event.target.closest('.now-top'), axis: null, held: false };
+      top: !!event.target.closest('.now-top'), axis: null, held: false, startY:0 };
     if (item) holdTimer = setTimeout(() => {
       if (!active || active.axis) return;
       active.held = true; consume(); openMenu(item);
@@ -43,6 +43,7 @@ export function bindGestures({ document, window, run, openMenu, nowDialog }) {
       if (Math.abs(g.dx) > Math.abs(g.dy) * 1.25) g.axis = 'x';
       else if (Math.abs(g.dy) > Math.abs(g.dx) * 1.25) g.axis = 'y';
       else return;
+      if(g.kind==='full')g.startY=beginPlayerDrag?.()||0;
     }
     if (g.axis === 'y' && g.kind === 'item') { reset(); return; }
     // A playlist's horizontal movement is not a playback or queue gesture.
@@ -52,7 +53,9 @@ export function bindGestures({ document, window, run, openMenu, nowDialog }) {
     g.surface.classList.add('gesture-active');
     const amount = g.axis === 'x' ? g.dx : g.dy;
     const offset = g.kind==='full'&&g.axis==='y'&&amount>0 ? amount*.85 : Math.max(-70, Math.min(70, amount * 0.55));
-    g.surface.style.setProperty('translate', g.axis === 'x' ? `${offset}px 0` : `0 ${offset}px`);
+    const y=g.axis==='y'?offset+g.startY:0;
+    g.surface.style.setProperty('transform', g.axis === 'x' ? `translate3d(${offset}px,0,0)` : `translate3d(0,${y}px,0)`);
+    if(g.kind==='full'&&g.axis==='y')g.surface.style.setProperty('--player-dim',String(Math.max(0,1-Math.max(0,y)/(window.innerHeight||800))));
     g.surface.classList.toggle('queue-ready', !!g.item && g.dx >= 64);
   }, { passive: false });
   document.addEventListener('pointerup', event => {
