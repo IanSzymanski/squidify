@@ -5,9 +5,6 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { webcrypto, randomUUID } from 'node:crypto';
-import * as core from '../dist/core.js';
-import * as metadata from '../dist/metadata.js';
-import * as icons from '../dist/icons.js';
 
 function memoryStore(){
   const stores=Object.fromEntries(['tracks','media','playlists','folders','settings'].map(n=>[n,new Map()]));
@@ -38,14 +35,22 @@ async function harness(t,db=memoryStore()){
   const window={addEventListener:(name,f)=>{events[name]=f;},scrollTo(){}};
   let hash='#library';const location={href:'https://squidify.example/',get hash(){return hash;},set hash(v){hash=v;queueMicrotask(()=>events.hashchange?.());}};
   const actions={};const navigator={userAgent:'Test',platform:'Test',maxTouchPoints:0,onLine:true,storage:{persist:async()=>true},mediaSession:{setActionHandler:(name,f)=>actions[name]=f,setPositionState(){}}};
-  const context=vm.createContext({__imports:{db,core,metadata,icons},document,window,navigator,location,URL,Blob,File,TextEncoder,DataView,Uint8Array,ArrayBuffer,crypto:{subtle:webcrypto.subtle,randomUUID},Audio:FakeAudio,MediaMetadata:class{constructor(value){Object.assign(this,value);}},AbortController,FormData,matchMedia:()=>({matches:false}),console:{error(){}},setTimeout:(f,ms)=>{const timer=setTimeout(f,ms);timers.add(timer);return timer;},clearTimeout:id=>{clearTimeout(id);timers.delete(id);}});
-  let source=await readFile(new URL('../dist/app.js',import.meta.url),'utf8');
-  source=source.replace(/^import .+;\n/gm,'').replace(/\ninit\(\);\s*$/,'');
-  const imports='const db=__imports.db;const {PlayQueue,formatTime,formatBytes,escapeHTML:esc}=__imports.core;const {isAudio,mimeFor,fingerprint,readMetadata}=__imports.metadata;const {icon,mark}=__imports.icons;\n';
-  vm.runInContext(imports+source+'\nglobalThis.api={init,state,actions,importEntries,savePlaylistForm,addToPlaylist,saveSession,render,readRoute};',context);
+  const context=vm.createContext({document,window,navigator,location,URL,Blob,File,TextEncoder,DataView,Uint8Array,ArrayBuffer,crypto:{subtle:webcrypto.subtle,randomUUID},Audio:FakeAudio,MediaMetadata:class{constructor(value){Object.assign(this,value);}},AbortController,FormData,matchMedia:()=>({matches:false}),console:{error(){}},setTimeout:(f,ms)=>{const timer=setTimeout(f,ms);timers.add(timer);return timer;},clearTimeout:id=>{clearTimeout(id);timers.delete(id);}});
+  // Evaluate the real ES module graph in an isolated browser-like context.
+  // Only IndexedDB is replaced; module imports/exports are not stripped.
+  const modules=new Map();
+  const storage=new vm.SyntheticModule(Object.keys(db),function(){for(const [key,value] of Object.entries(db))this.setExport(key,value);},{context});
+  async function load(url){
+    if(url.endsWith('/storage.js'))return storage;
+    if(!modules.has(url))modules.set(url,new vm.SourceTextModule(await readFile(new URL(url),'utf8'),{context,identifier:url}));
+    return modules.get(url);
+  }
+  const entry=await load(new URL('../dist/app.js',import.meta.url).href);
+  await entry.link((specifier,ref)=>load(new URL(specifier,ref.identifier).href));
+  await entry.evaluate();await entry.namespace.ready;
+  const {context:app,actions:appActions}=entry.namespace;
   t.after(()=>{for(const timer of timers)clearTimeout(timer);});
-  await context.api.init();
-  return {...context.api,db,element,mediaActions:actions,emitDocument:(name,event)=>events['doc:'+name]?.(event)};
+  return {state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,emitDocument:(name,event)=>events['doc:'+name]?.(event)};
 }
 test('empty library starts with working folder and file input alternatives',async t=>{
   const app=await harness(t);assert.match(app.element('#main').innerHTML,/Your music belongs here/);
@@ -98,4 +103,24 @@ test('deleting a song removes saved bytes and playlist references; deleting a pl
 test('local metadata is escaped before it reaches the music list',async t=>{
   const app=await harness(t);await app.importEntries([{file:musicFile('<img src=x onerror=alert(1)>')}]);
   assert.doesNotMatch(app.element('#main').innerHTML,/<img src=x/);assert.match(app.element('#main').innerHTML,/&lt;img src=x/);
+});
+
+test('pre-refactor saved records restore without migration or re-import',async t=>{
+  const db=memoryStore();
+  const track={id:'legacy-track',title:'Saved song',artist:'Artist',album:'Album',name:'saved.mp3',path:'Music/saved.mp3',folderId:'legacy-folder',size:3,mime:'audio/mpeg',duration:120,addedAt:123,liked:true};
+  const playlist={id:'legacy-playlist',name:'Existing playlist',trackIds:[track.id],color:'lime',createdAt:124};
+  await db.saveTrack(track,new Blob(['old'],{type:'audio/mpeg'}));
+  await db.put('playlists',playlist);
+  await db.put('folders',{id:'legacy-folder',name:'Music',handle:{kind:'directory',name:'Music'}});
+  await db.setSetting('session',{queue:{source:[track.id],order:[track.id],index:0,shuffle:true,repeat:'all',context:playlist.name},time:42,volume:0.4,muted:true,sort:'artist'});
+  const app=await harness(t,db);
+  assert.equal(app.state.tracks.get(track.id).liked,true);
+  assert.equal(app.state.playlists[0].id,playlist.id);
+  assert.equal(app.state.folders[0].handle.name,'Music');
+  assert.equal(app.state.queue.current,track.id);
+  assert.equal(app.state.queue.shuffle,true);assert.equal(app.state.queue.repeat,'all');
+  assert.equal(app.state.sort,'artist');
+  assert.equal(app.element('#audio').paused,true);assert.equal(app.element('#audio').currentTime,42);
+  assert.equal(app.element('#audio').volume,0.4);assert.equal(app.element('#audio').muted,true);
+  assert.equal(await db.stores.media.get(track.id).blob.text(),'old');
 });

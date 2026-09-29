@@ -40,3 +40,36 @@ Static assets live in `dist`. Source is deployed from the Sites Git repository. 
 For any release that changes cached assets, update `VERSION` in `dist/sw.js`. The worker activates only after every shell asset has been cached. Database schema is versioned independently.
 
 Updates wait for existing app windows to close and do not force a reload or claim an open session. To apply an update, open Squidify online, then close all its tabs/app windows and reopen it. File inputs stay mounted while the native picker is open; the import dialog is closed only after files have been selected. Rendering is deferred during native selection.
+
+## Architecture (SQ-001)
+
+`app.js` is the composition and startup entry point. It wires the modules, restores
+saved records and a paused session, and registers browser tools.
+
+| Module | Responsibility |
+| --- | --- |
+| `context.js` | Shared application model, stable DOM references, and lookup helpers |
+| `interface.js` | Views, dialogs, artwork URLs, routing, and delegated UI events |
+| `import.js` | File/folder selection, rescans, deduplication, imports, and duration probes |
+| `playlists.js` | Playlist and liked-song operations, forms, export, and playlist tool execution |
+| `playback.js` | Audio lifecycle, queue actions, media URLs, Media Session, and session saving |
+| `offline.js` | Service-worker registration and offline-readiness checks |
+| `storage.js` | Existing IndexedDB schema and transactions, unchanged by SQ-001 |
+| `core.js`, `metadata.js`, `icons.js` | Existing queue/helpers, metadata parsing, and icon assets |
+
+Each subsystem is a factory with an explicit public API. The entry point creates
+stable API objects before binding events; callbacks resolve collaborators after
+wiring. There are no cyclic ES module imports. Playback and import timers/caches
+are private to their owning modules, and native file inputs remain mounted.
+
+SQ-001 changes neither the database name/version nor track, media, folder,
+playlist, or session record formats. No migration or music re-import is needed.
+The service worker's v4 shell includes every new module and retains the existing
+wait-until-windows-close update behavior.
+
+The workflow tests evaluate the real ES module graph with Node's VM modules
+flag (development only), replacing only persistence with an in-memory adapter.
+They cover import/deduplication, playlist changes, saved-session restoration,
+failed writes, picker lifetimes, and deletion. Offline tests serve the full module
+set without network access. Physical-phone playback and browser storage policies
+still require device testing.
