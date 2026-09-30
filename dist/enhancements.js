@@ -1,4 +1,4 @@
-import { BAND_COUNT, spectrumAt, followLevel, equalizerPoints } from './spectrum.js';
+import { BAND_COUNT, spectrumAt, followLevel, equalizerPoints, equalizerTangents } from './spectrum.js';
 import { icon } from './icons.js';
 import * as db from './storage.js';
 import { escapeHTML as esc } from './core.js';
@@ -132,8 +132,9 @@ export function createEnhancements(context) {
 
       });
       const points=equalizerPoints(levels,w,h,motionStart,motionEnd);
+      const tangents=equalizerTangents(points);
       const gradient=ctx.createLinearGradient(0,0,w,0);gradient.addColorStop(0,'#0eedb5');gradient.addColorStop(.5,'#63a4ef');gradient.addColorStop(1,'#ae00ff');
-      const curve=()=>{ctx.beginPath();ctx.moveTo(points[0].x,points[0].y);for(let i=0;i<points.length-1;i++){const a=points[i],b=points[i+1],mid=(a.x+b.x)/2;ctx.bezierCurveTo(mid,a.y,mid,b.y,b.x,b.y);}};
+      const curve=()=>{ctx.beginPath();ctx.moveTo(points[0].x,points[0].y);for(let i=0;i<points.length-1;i++){const a=points[i],b=points[i+1],third=(b.x-a.x)/3;ctx.bezierCurveTo(a.x+third,a.y+tangents[i]*third,b.x-third,b.y-tangents[i+1]*third,b.x,b.y);}};
       curve();ctx.lineTo(w,h);ctx.lineTo(0,h);ctx.closePath();ctx.fillStyle=gradient;ctx.globalAlpha=.2;ctx.fill();ctx.globalAlpha=1;
       curve();ctx.strokeStyle=gradient;ctx.lineWidth=1.7;ctx.lineCap='round';ctx.shadowColor='#24dfb980';ctx.shadowBlur=9;ctx.shadowOffsetY=4;ctx.stroke();ctx.shadowBlur=0;ctx.shadowOffsetY=0;
     });

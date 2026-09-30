@@ -14,7 +14,7 @@ export function spectrumAt(channel,center,sampleRate){
 }
 export const followLevel=(current,target)=>current+(target-current)*(target>current?.92:.48);
 
-// Broad, soft spectral shoulders share raised valleys rather than isolated spikes.
+// One apex per zone, joined directly: no synthetic shoulders or boundary dips.
 // Optional bounds keep the outer baseline still on the full-width player canvas.
 export function equalizerPoints(levels,width,height,motionStart=0,motionEnd=width){
  const zones=12,baseline=height-3,amplitude=Math.max(1,height-8),points=[{x:0,y:baseline}],peaks=[];
@@ -28,15 +28,27 @@ export function equalizerPoints(levels,width,height,motionStart=0,motionEnd=widt
   }
   peaks.push(Math.min(1,Math.sqrt(energy/(end-start))));
  }
+ const strongest=Math.max(...peaks);
  if(from>0)points.push({x:from,y:baseline});
  for(let zone=0;zone<zones;zone++){
-  const peak=peaks[zone],left=from+zone/zones*(to-from),right=from+(zone+1)/zones*(to-from);
-  points.push({x:left+(right-left)*.24,y:baseline-peak*amplitude*.94});
-  points.push({x:(left+right)/2,y:baseline-peak*amplitude});
-  points.push({x:left+(right-left)*.76,y:baseline-peak*amplitude*.94});
-  const valley=zone===zones-1?0:Math.min(peak,peaks[zone+1])*.78;
-  points.push({x:right,y:baseline-valley*amplitude});
+  // Preserve overall loudness while making quieter zones recede from the leader.
+  const peak=strongest>0?strongest*Math.pow(peaks[zone]/strongest,2.4):0;
+  points.push({x:from+(zone+.5)/zones*(to-from),y:baseline-peak*amplitude});
  }
+ points.push({x:to,y:baseline});
  if(to<width)points.push({x:width,y:baseline});
  return points;
+}
+
+// Shape-preserving cubic tangents round the actual peaks without flattening
+// every intermediate point or overshooting into a new valley. End tangents are
+// zero so the moving contour joins the protected outer baseline smoothly.
+export function equalizerTangents(points){
+ const slopes=points.slice(1).map((p,i)=>(p.y-points[i].y)/(p.x-points[i].x));
+ return points.map((p,i)=>{
+  if(i===0||i===points.length-1||slopes[i-1]*slopes[i]<=0)return 0;
+  const before=p.x-points[i-1].x,after=points[i+1].x-p.x;
+  const w1=2*after+before,w2=after+2*before;
+  return (w1+w2)/(w1/slopes[i-1]+w2/slopes[i]);
+ });
 }

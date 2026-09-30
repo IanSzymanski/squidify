@@ -12,14 +12,32 @@ test('sharp accents attack quickly while release remains smooth',()=>{
  assert.ok(followLevel(0,1)>.9);assert.ok(followLevel(1,0)>.4&&followLevel(1,0)<.6);assert.equal(followLevel(0,0),0);
 });
 
-test('connected curve blends twelve broad hotspots with shallow shared valleys',async()=>{
+test('connected curve joins twelve zone apices without artificial valleys',async()=>{
  const {equalizerPoints}=await import('../dist/spectrum.js');
  const points=equalizerPoints(Array(18).fill(1),300,70);
  assert.equal(points.filter(p=>p.y===8-3).length,12);
+ assert.equal(points.length,14,'only zone apices and baseline endpoints remain');
  assert.equal(points.filter(p=>p.y===67).length,2,'only the outer edges return to baseline');
  assert.ok(points.slice(1,-1).every(p=>p.y<67-62*.7),'neighboring strong bands blend above the baseline');
  assert.ok(points.every((p,i)=>!i||p.x>points[i-1].x));
  assert.ok(equalizerPoints(Array(18).fill(0),22,22).every(p=>p.y===19));
+});
+
+test('dominant zones stand out and curved joins never introduce dips or overshoot',async()=>{
+ const {equalizerPoints,equalizerTangents}=await import('../dist/spectrum.js');
+ const levels=Array(18).fill(.5);levels[7]=.65;levels[8]=1;levels[9]=.8;
+ const points=equalizerPoints(levels,300,70),tangents=equalizerTangents(points);
+ const heights=points.slice(1,-1).map(p=>67-p.y);
+ assert.ok(Math.max(...heights)/heights[0]>3,'dominant peak exceeds the original two-to-one level contrast');
+ assert.ok(tangents.some(t=>t!==0),'sloping joins do not flatten every node');
+ for(let i=0;i<points.length-1;i++){
+  const a=points[i],b=points[i+1],dx=(b.x-a.x)/3;
+  const c=a.y+tangents[i]*dx,d=b.y-tangents[i+1]*dx;
+  for(let j=0;j<=20;j++){
+   const t=j/20,u=1-t,y=u*u*u*a.y+3*u*u*t*c+3*u*t*t*d+t*t*t*b.y;
+   assert.ok(y>=Math.min(a.y,b.y)-1e-9&&y<=Math.max(a.y,b.y)+1e-9);
+  }
+ }
 });
 
 test('full-width baseline stays still outside the moving center and matches mini geometry',async()=>{
