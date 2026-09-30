@@ -265,3 +265,41 @@ Play, Pause during recovery, unsupported APIs, delayed playing, long playlists
 and source reuse. Simulated output is not physical sound verification. Retest
 lock-screen Play and Next after natural playlist completion on v22; audible
 playback in the installed iPhone app remains unconfirmed.
+
+## Shell v23 — Preserve background music ownership
+
+The user reports that v22 fades out during normal Home Screen/lock use (not
+force-quitting), loses its lock-screen controls and leaves a blank Now Playing
+module. iOS then offered to install/open Apple Music. Squidify contains no Apple
+Music integration or App Store redirect; the OS fallback explanation remains an
+inference without a native device trace.
+
+Code investigation found three unsafe session paths: v22 temporarily selected
+ambient for every hidden playback request and relied on a timer to restore
+playback; it declared paused during startup/buffering; and a metadata refresh
+during an uncached source load could clear the entire media session. Apple's
+ambient audio category is silenced by screen lock. The related WebKit 323104
+recovery report was not sufficient justification for applying that category
+cycle to every background playback request.
+
+v23 removes the cycle and its timer, keeps a stable playback category, preserves
+declared playback intent through loading/buffering, and refreshes existing
+metadata across visibility/page lifecycle changes without replaying or taking
+focus back from a real interruption. Position still waits for valid current
+source metadata and actual playing. Stale play-promise failures cannot override
+a newer song. Cached playlist restarts and source reuse remain intact.
+
+Settings > Playback help > View playback report provides the last 80 local
+events with app/browser versions, visibility, transport and audio-session
+states. It includes no song names, file URLs, track IDs or audio. Nothing is
+transmitted automatically; Copy report explicitly copies it for user sharing.
+
+Verification: four focused regressions failed on v22 before the correction;
+all 88 checks now pass, including lifecycle, delayed-source handoffs, Play/Next
+restart, stale promise handling, report privacy/bounds and offline asset access.
+These establish code behavior, not physical iOS audibility. Device verification
+of screen-lock playback and restart remains pending. Confirm Settings v23,
+start a song, return Home and lock normally, then test track changes/completion.
+
+References: [Apple ambient category](https://developer.apple.com/it/documentation/audiotoolbox/kaudiosessioncategory_ambientsound),
+[Media Session declared state and routing](https://w3c.github.io/mediasession/#playback-state).

@@ -44,37 +44,37 @@ async function mediaFixture(t,options={}) {
 }
 const settlePlayback=()=>new Promise(resolve=>setImmediate(resolve));
 
-// Simulate WebKit 323104: JS still reports playback, but the native category
-// has fallen to ambient. Duplicate type assignments do not repair that fault.
-function staleNativeOutput(){
-  const output={category:'playback'},changes=[];let type='playback';
-  const audioSession={get type(){return type;},set type(value){changes.push(value);if(value!==type){type=value;output.category=value;}}};
-  return {output,changes,audioSession};
+function musicSessionFixture(){
+  const changes=[];let type='auto';
+  const audioSession={get type(){return type;},set type(value){changes.push(value);type=value;}};
+  return {changes,audioSession};
 }
-const settleCategory=()=>new Promise(resolve=>setTimeout(resolve,10));
 
-test('hidden iOS Play and Next recover a stale native category after playlist completion',async t=>{
+test('hidden iOS playlist restarts retain playback category before any timer can run',async t=>{
   for(const action of ['play','nexttrack']){
-    const native=staleNativeOutput(),app=await mediaFixture(t,{isIOS:true,audioSession:native.audioSession,nativeOutput:native.output}),audio=app.element('#audio');
+    const native=musicSessionFixture(),app=await mediaFixture(t,{isIOS:true,audioSession:native.audioSession}),audio=app.element('#audio');
     app.state.queue.index=2;await app.playback.loadTrack('c',true);await settlePlayback();
     audio.currentTime=audio.duration;audio.ended=true;audio.paused=true;audio.emit('ended');await settlePlayback();
-    app.setHidden(true);native.output.category='ambient';
+    app.setHidden(true);
     let inAction=false;audio.beforePlay=()=>assert.equal(inAction,true,'play remains synchronous in the native action');
     inAction=true;const started=app.mediaActions[action]();inAction=false;
-    assert.equal(audio.paused,false);assert.equal(audio.soundActive,false,'successful play alone cannot verify native sound');
-    await started;await settleCategory();
-    assert.equal(app.state.queue.current,'a');assert.equal(audio.soundActive,true);assert.equal(native.audioSession.type,'playback');
-    assert.deepEqual(native.changes.slice(-3),['playback','ambient','playback']);assert.equal(audio.loadCalls,0);
+    assert.equal(native.audioSession.type,'playback','background ownership cannot depend on a later timer');
+    await started;
+    assert.equal(app.state.queue.current,'a');assert.equal(audio.paused,false);
+    assert.ok(native.changes.every(type=>type==='playback'),'music never changes to a category silenced by screen lock');assert.equal(audio.loadCalls,0);
   }
 });
-test('an external Play can recover apparently playing output without restarting, and Pause cancels recovery playback',async t=>{
-  const native=staleNativeOutput(),app=await mediaFixture(t,{isIOS:true,audioSession:native.audioSession,nativeOutput:native.output}),audio=app.element('#audio');
-  await app.mediaActions.play();audio.currentTime=19;app.setHidden(true);native.output.category='ambient';
-  assert.equal(audio.paused,false);assert.equal(audio.soundActive,false);const source=audio.src;
-  await app.mediaActions.play();await settleCategory();
-  assert.equal(audio.soundActive,true);assert.equal(audio.src,source);assert.equal(audio.currentTime,19);assert.equal(app.state.queue.index,0);
-  native.output.category='ambient';const recovering=app.mediaActions.play();app.mediaActions.pause();await recovering;await settleCategory();
-  assert.equal(audio.paused,true);assert.equal(audio.soundActive,false);assert.equal(native.audioSession.type,'playback');assert.equal(app.mediaSession.playbackState,'paused');
+test('Home Screen, lock and return preserve playing metadata; explicit Pause stays paused',async t=>{
+  const native=musicSessionFixture(),app=await mediaFixture(t,{isIOS:true,audioSession:native.audioSession}),audio=app.element('#audio');
+  await app.mediaActions.play();audio.currentTime=19;const source=audio.src,calls=audio.playCalls.length;
+  app.setHidden(true);app.emitDocument('visibilitychange',{});app.emitWindow('pagehide');
+  assert.equal(audio.paused,false);assert.equal(audio.src,source);assert.equal(audio.currentTime,19);assert.equal(audio.playCalls.length,calls);
+  assert.equal(native.audioSession.type,'playback');assert.equal(app.mediaSession.metadata.title,'Song a');assert.equal(app.mediaSession.playbackState,'playing');
+  audio.emit('waiting');assert.equal(app.mediaSession.playbackState,'playing','buffering is not a user pause');
+  app.setHidden(false);app.emitDocument('visibilitychange',{});app.emitWindow('pageshow');
+  assert.equal(audio.playCalls.length,calls);assert.equal(app.mediaSession.metadata.title,'Song a');
+  app.mediaActions.pause();app.setHidden(true);app.emitDocument('visibilitychange',{});app.setHidden(false);app.emitWindow('pageshow');
+  assert.equal(audio.paused,true);assert.equal(audio.playCalls.length,calls);assert.equal(app.mediaSession.playbackState,'paused');
 });
 test('unsupported and throwing Audio Session APIs retain hidden playback behavior',async t=>{
   for(const audioSession of [undefined,{set type(value){throw new Error('unsupported category');}}]){
@@ -83,14 +83,47 @@ test('unsupported and throwing Audio Session APIs retain hidden playback behavio
     assert.equal(app.state.queue.current,'b');assert.equal(audio.paused,false);assert.equal(app.mediaSession.playbackState,'playing');
   }
 });
-test('lock-screen position waits for actual playing and clears during buffering',async t=>{
+test('buffering preserves Play intent while lock-screen position waits for actual playing',async t=>{
   const app=await mediaFixture(t),audio=app.element('#audio');audio.deferPlaying=true;
   await app.mediaActions.play();
-  assert.equal(audio.paused,false);assert.equal(app.mediaSession.playbackState,'paused');assert.equal(app.positions.at(-1),undefined);
+  assert.equal(audio.paused,false);assert.equal(app.mediaSession.playbackState,'playing');assert.equal(app.positions.at(-1),undefined);
   audio.emit('playing');assert.equal(app.mediaSession.playbackState,'playing');assert.equal(app.positions.at(-1).position,24);
-  audio.emit('waiting');audio.emit('timeupdate');assert.equal(app.mediaSession.playbackState,'paused');assert.equal(app.positions.at(-1),undefined);
+  audio.emit('waiting');audio.emit('timeupdate');assert.equal(app.mediaSession.playbackState,'playing');assert.equal(app.positions.at(-1),undefined);
   audio.emit('playing');assert.equal(app.mediaSession.playbackState,'playing');assert.equal(app.positions.at(-1).duration,120);
   app.mediaActions.pause();assert.equal(app.mediaSession.playbackState,'paused');assert.equal(app.positions.at(-1).position,24);
+});
+test('slow source loading and repeated Play preserve the session across visibility changes',async t=>{
+  let release;
+  const db=memoryStore();for(const id of ['a','b','c','d'])await db.saveTrack({id,title:`Song ${id}`,duration:120},new Blob([id]));
+  await db.setSetting('session',{queue:{source:['a','b','c','d'],order:['a','b','c','d'],index:0}});
+  const original=db.get;db.get=async(store,id)=>{if(store==='media'&&id==='d')await new Promise(resolve=>{release=resolve;});return original(store,id);};
+  const slow=await harness(t,db),player=slow.element('#audio');await slow.mediaActions.play();await settlePlayback();
+  slow.state.queue.index=3;const loading=slow.playback.loadTrack('d',true);
+  slow.setHidden(true);slow.emitDocument('visibilitychange',{});slow.playback.updateMediaSession();await slow.mediaActions.play();
+  assert.equal(slow.mediaSession.playbackState,'playing');assert.ok(slow.mediaSession.metadata,'pending source must not erase the native session');
+  release();await loading;assert.equal(slow.mediaSession.metadata.title,'Song d');assert.equal(player.paused,false);
+});
+test('a rejected old Play request cannot pause a newer song or override explicit Pause',async t=>{
+  const app=await mediaFixture(t),audio=app.element('#audio');await settlePlayback();
+  const play=audio.play.bind(audio);let reject;
+  audio.play=()=>new Promise((resolve,fail)=>{reject=fail;});
+  const previous=app.mediaActions.play();audio.play=play;await app.mediaActions.nexttrack();
+  reject(Object.assign(new Error('interrupted old request'),{name:'NotAllowedError'}));await previous;
+  assert.equal(app.state.queue.current,'b');assert.equal(audio.paused,false);assert.equal(app.mediaSession.playbackState,'playing');
+  app.mediaActions.pause();audio.play=()=>new Promise((resolve,fail)=>{reject=fail;});
+  const pending=app.mediaActions.play();app.mediaActions.pause();reject(Object.assign(new Error('paused'),{name:'AbortError'}));await pending;
+  assert.equal(app.mediaSession.playbackState,'paused');assert.equal(audio.paused,true);
+});
+test('playback reports retain background events locally with bounded history and no song identifiers',async t=>{
+  const values=new Map(),localStorage={getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value)};
+  let copied;const app=await mediaFixture(t,{localStorage,clipboard:{writeText:async value=>{copied=value;}}}),audio=app.element('#audio');
+  await app.mediaActions.play();app.setHidden(true);app.emitDocument('visibilitychange',{});audio.pause();
+  app.setHidden(false);app.emitDocument('visibilitychange',{});app.actions['playback-report']();await app.actions['copy-playback-report']();
+  const report=JSON.parse(copied);assert.ok(report.events.some(x=>x.event==='hidden'));assert.ok(report.events.some(x=>x.event==='pause'&&x.hidden));
+  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v23');
+  for(let i=0;i<100;i++)audio.emit('stalled');await app.actions['copy-playback-report']();assert.equal(JSON.parse(copied).events.length,80);
+  const reopened=await mediaFixture(t,{localStorage,clipboard:{writeText:async value=>{copied=value;}}});await reopened.actions['copy-playback-report']();
+  assert.ok(JSON.parse(copied).events.some(x=>x.event==='stalled'));assert.ok(values.size);
 });
 test('a long shuffled playlist preloads the exact next pass for synchronous lock-screen restart',async t=>{
   const db=memoryStore(),ids=Array.from({length:10},(_,i)=>String(i));
@@ -367,8 +400,9 @@ async function harness(t,db=memoryStore(),mediaOptions={}){
   if(mediaOptions.serviceWorker)navigator.serviceWorker=mediaOptions.serviceWorker;
   if(mediaOptions.mediaDevices)navigator.mediaDevices=mediaOptions.mediaDevices;
   if(mediaOptions.audioSession)navigator.audioSession=mediaOptions.audioSession;
+  if(mediaOptions.clipboard)navigator.clipboard=mediaOptions.clipboard;
   if(mediaOptions.stateThrows)Object.defineProperty(mediaSession,'playbackState',{set(){throw new Error('Unsupported state');}});
-  const context=vm.createContext({document,window,navigator,location,URL,Blob,File,TextEncoder,DataView,Uint8Array,ArrayBuffer,crypto:{subtle:webcrypto.subtle,randomUUID},Audio:FakeAudio,MediaMetadata:class{constructor(value){Object.assign(this,value);}},AbortController,FormData,matchMedia:()=>({matches:false}),console:{error(){}},setTimeout:(f,ms)=>{const timer=setTimeout(f,ms);timers.add(timer);return timer;},clearTimeout:id=>{clearTimeout(id);timers.delete(id);}});
+  const context=vm.createContext({document,window,navigator,location,localStorage:mediaOptions.localStorage,URL,Blob,File,TextEncoder,DataView,Uint8Array,ArrayBuffer,crypto:{subtle:webcrypto.subtle,randomUUID},Audio:FakeAudio,MediaMetadata:class{constructor(value){Object.assign(this,value);}},AbortController,FormData,matchMedia:()=>({matches:false}),console:{error(){}},setTimeout:(f,ms)=>{const timer=setTimeout(f,ms);timers.add(timer);return timer;},clearTimeout:id=>{clearTimeout(id);timers.delete(id);}});
   if(mediaOptions.random)context.Math=Object.assign(Object.create(Math),{random:mediaOptions.random});
   // Evaluate the real ES module graph in an isolated browser-like context.
   // Only IndexedDB is replaced; module imports/exports are not stripped.
@@ -384,7 +418,7 @@ async function harness(t,db=memoryStore(),mediaOptions={}){
   await entry.evaluate();await entry.namespace.ready;
   const {context:app,actions:appActions}=entry.namespace;
   t.after(()=>{for(const timer of timers)clearTimeout(timer);});
-  return {setHidden:value=>{document.hidden=value;},outputControls,waveCanvases,enhancements:app.enhancements,ui:app.ui,offline:app.offline,state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,saveTrackDetails:app.playlists.saveTrackDetails,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,mediaSession,registrations,positions,playback:app.playback,emitDocument:(name,event)=>events['doc:'+name]?.forEach(fn=>fn(event))};
+  return {setHidden:value=>{document.hidden=value;},outputControls,waveCanvases,enhancements:app.enhancements,ui:app.ui,offline:app.offline,state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,saveTrackDetails:app.playlists.saveTrackDetails,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,mediaSession,registrations,positions,playback:app.playback,emitDocument:(name,event)=>events['doc:'+name]?.forEach(fn=>fn(event)),emitWindow:name=>events[name]?.()};
 }
 test('empty library starts with working folder and file input alternatives',async t=>{
   const app=await harness(t);assert.match(app.element('#main').innerHTML,/Your music belongs here/);
@@ -514,16 +548,16 @@ test('installed-update toast is shown once, only for the running ready release',
   await app.offline.announceInstalled('squidify-shell-v5',true);
   assert.equal(app.element('#toast').hidden,true);
   assert.equal(app.db.stores.settings.has('installedShellVersion'),false);
-  await Promise.all([app.offline.announceInstalled('squidify-shell-v22',true),app.offline.announceInstalled('squidify-shell-v22',true)]);
+  await Promise.all([app.offline.announceInstalled('squidify-shell-v23',true),app.offline.announceInstalled('squidify-shell-v23',true)]);
   assert.match(app.element('#toast').textContent,/Squidify updated/);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v22');
-  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v22',true);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v23');
+  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v23',true);
   assert.equal(reopened.element('#toast').hidden,true);
 });
 test('a first install records its release without claiming an update',async t=>{
-  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v22',false);
+  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v23',false);
   assert.equal(app.element('#toast').hidden,true);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v22');
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v23');
 });
 
 
