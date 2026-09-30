@@ -1,4 +1,4 @@
-import { BAND_COUNT, spectrumAt, followLevel } from './spectrum.js';
+import { BAND_COUNT, spectrumAt, followLevel, equalizerPoints } from './spectrum.js';
 import { icon } from './icons.js';
 import * as db from './storage.js';
 import { escapeHTML as esc } from './core.js';
@@ -113,18 +113,23 @@ export function createEnhancements(context) {
     let settling=false;
     $$('.audio-wave').forEach(canvas=>{
       const ctx=canvas.getContext('2d');if(!ctx)return;
+      if(canvas.classList?.contains('full-wave')){
+        const dialog=canvas.closest('#nowDialog'),left=dialog?.querySelector('.now-footer .output-control'),right=dialog?.querySelector('.now-footer [data-action="queue"]');
+        if(left&&right){const d=dialog.getBoundingClientRect(),a=left.getBoundingClientRect(),b=right.getBoundingClientRect();canvas.style.left=`${Math.max(0,a.right-d.left+12)}px`;canvas.style.width=`${Math.max(0,b.left-a.right-24)}px`;}
+      }
       const rect=canvas.getBoundingClientRect(),ratio=Math.min(2,window.devicePixelRatio||1),w=rect.width,h=rect.height;
       if(w<2||h<2){ctx.clearRect(0,0,canvas.width,canvas.height);return;}
       if(canvas.width!==Math.round(w*ratio)||canvas.height!==Math.round(h*ratio)){canvas.width=Math.round(w*ratio);canvas.height=Math.round(h*ratio);}
       ctx.setTransform(ratio,0,0,ratio,0,0);ctx.clearRect(0,0,w,h);
       canvas.setAttribute('aria-label',samples?'Audio equalizer':'Equalizer unavailable for this file');
-      let levels=envelopes.get(canvas);if(!levels){levels=Array(BAND_COUNT+2).fill(0);envelopes.set(canvas,levels);}
-      const points=levels.map((level,i)=>{
+      let levels=envelopes.get(canvas);if(!levels){levels=Array(BAND_COUNT).fill(0);envelopes.set(canvas,levels);}
+      levels.forEach((level,i)=>{
         const at=Math.min(Math.max(0,Math.floor(audio.currentTime*30)),Math.max(0,(samples?.length||0)/BAND_COUNT-1));
-        const target=playing&&samples&&!reduced&&i>0&&i<=BAND_COUNT?(samples[at*BAND_COUNT+i-1]||0):0;
-        levels[i]=followLevel(level,target);if(levels[i]>.002)settling=true;else levels[i]=0;
-        return {x:i/(BAND_COUNT+1)*w,y:h-3-levels[i]*(h-12)};
+        const target=playing&&samples&&!reduced?(samples[at*BAND_COUNT+i]||0):0;
+        levels[i]=followLevel(level,Math.pow(target,1.8));if(levels[i]>.002)settling=true;else levels[i]=0;
+
       });
+      const points=equalizerPoints(levels,w,h);
       const gradient=ctx.createLinearGradient(0,0,w,0);gradient.addColorStop(0,'#0eedb5');gradient.addColorStop(.5,'#63a4ef');gradient.addColorStop(1,'#ae00ff');
       const curve=()=>{ctx.beginPath();ctx.moveTo(points[0].x,points[0].y);for(let i=0;i<points.length-1;i++){const a=points[i],b=points[i+1],mid=(a.x+b.x)/2;ctx.bezierCurveTo(mid,a.y,mid,b.y,b.x,b.y);}};
       curve();ctx.lineTo(w,h);ctx.lineTo(0,h);ctx.closePath();ctx.fillStyle=gradient;ctx.globalAlpha=.2;ctx.fill();ctx.globalAlpha=1;

@@ -196,3 +196,9 @@ main{flex:1;min-height:0;overflow-y:auto;overscroll-behavior-y:contain;-webkit-o
 .queue-underlay{flex-direction:column;align-items:flex-start;justify-content:center;gap:2px;padding-left:8px}
 .queue-underlay .icon{margin-left:18px}
 .queue-underlay span{width:56px;text-align:center;font-size:11px;white-space:normal}
+/* Compact equalizer at Play; full-player motion stays clear of output/queue. */
+#player .mini-wave{position:static;display:block;flex:0 0 22px;width:22px;height:22px;max-width:22px;pointer-events:none;opacity:1}
+#nowDialog>.full-wave{left:84px;right:auto;width:calc(100% - 168px);height:70px}
+.player::before{content:'';position:absolute;inset:0 12px auto;height:1px;background:var(--iris);opacity:.7;pointer-events:none}
+.brand-mark{margin-right:3px}
+.mobile-brand{gap:2px}

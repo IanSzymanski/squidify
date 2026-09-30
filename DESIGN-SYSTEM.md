@@ -13,7 +13,7 @@ Mobile is the primary interaction target; desktop retains keyboard navigation, s
 
 ## Mobile polish
 
-- The equalizer remains a continuous cubic Bézier contour with a mint-to-violet stroke, translucent gradient fill and restrained glow. Eighteen fixed frequency bands form hotspots at the current playback position, with fast attack and smooth release; the curve does not scroll in time. Hidden canvases are cleared without resizing to zero, and the full player redraws after opening. It sits directly above the mini-player and at the bottom edge of the full player.
+- The equalizer remains a continuous cubic Bézier contour with a mint-to-violet stroke, translucent gradient fill and restrained glow. Eighteen fixed frequency bands feed six separated, narrow Bézier hotspots with baseline valleys at the current playback position, with fast attack and smooth release; the curve does not scroll in time. Hidden canvases are cleared without resizing to zero, and the full player redraws after opening. It sits at 22px immediately right of mini-player Play; in the full player it remains at the bottom edge and is horizontally bounded by the Bluetooth and queue controls.
 - The mini-player uses an unsquashed 44px output button in place of Next. Headphone icons are green only when an exposed selected-output label identifies headphones; unknown routes retain the Bluetooth glyph. Full-player skip controls and skip gestures remain available.
 - All overflow menus use vertical dots. Dialogs initially focus a neutral heading or the dialog; keyboard focus indications remain available on interactive controls. Touch-only devices do not retain hover backgrounds.
 - Mobile search animates its height and opacity on both entry and exit, preserving Safari rebound protection.
@@ -25,4 +25,4 @@ Mobile is the primary interaction target; desktop retains keyboard navigation, s
 Physical iPhone Safari and Home Screen testing: whole-screen gestures, search scroll reveal, keyboard layout, toast placement, background playback, lock-screen art, and OS audio output chooser. Automated tests do not substitute for this coverage.
 
 - Collection Play controls toggle the active collection queue and reflect audio play/pause events. Starting another collection creates its queue; pausing never restarts the current song.
-- The brand mark is about 40% larger. The mini-player has no separate gradient hairline. Song rows use padded, rounded cell surfaces over a stationary swipe-to-queue underlay.
+- The brand mark is about 40% larger, with tightened spacing to the wordmark. The mini-player has a restored thin gradient hairline. Song rows use padded, rounded cell surfaces over a stationary swipe-to-queue underlay.
