@@ -6,7 +6,7 @@ export function createContext() {
   const $$ = (s, root = document) => [...root.querySelectorAll(s)];
   const main = $('#main'), audio = $('#audio'), modal = $('#modal'), nowDialog = $('#nowDialog');
   const fileInput = $('#fileInput'), folderInput = $('#folderInput');
-  const state = { tracks: new Map(), playlists: [], folders: [], queue: new PlayQueue(), view: 'library', detail: '', search: '', tab: 'songs', sort: 'added', busy: false, stopImport: false, shellReady: false, storage: {}, installPrompt: null, ready: false };
+  const state = { tracks: new Map(), playlists: [], folders: [], queue: new PlayQueue(), view: 'library', detail: '', search: '', tab: 'songs', sort: 'added', busy: false, stopImport: false, shellReady: false, updateDownloading: false, storage: {}, installPrompt: null, ready: false };
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone;
   const trackArray = () => [...state.tracks.values()];

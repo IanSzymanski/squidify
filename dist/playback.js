@@ -19,6 +19,7 @@ export function createPlayback(context) {
   const mediaURLs = new Map(), mediaPromises = new Map();
   let activeId = null, playGeneration = 0, playIntent = false, priming = false, audioUnlocked = false, stateTimer, lastSavedAt = 0;
   let eventsBound = false, mediaSessionBound = false;
+  let metadataReady = false, restorePosition = 0;
 
   async function mediaURL(id) {
     if(mediaURLs.has(id))return mediaURLs.get(id);
@@ -27,11 +28,16 @@ export function createPlayback(context) {
       const item=await db.get('media',id);
       if(!item?.blob)throw new Error('This song is no longer saved on this device. Import the file again.');
       const url=URL.createObjectURL(item.blob);mediaURLs.set(id,url);
-      for(const [key,value] of mediaURLs){if(mediaURLs.size<=4)break;if(key!==id&&key!==activeId&&key!==state.queue.order[state.queue.index+1]){URL.revokeObjectURL(value);mediaURLs.delete(key);}}
+      for(const [key,value] of mediaURLs){if(mediaURLs.size<=4)break;if(key!==id&&key!==activeId&&key!==state.queue.order[state.queue.index+1]&&key!==state.queue.order[state.queue.index-1]){URL.revokeObjectURL(value);mediaURLs.delete(key);}}
       return url;
     })();
     mediaPromises.set(id,promise);
     try{return await promise;}finally{mediaPromises.delete(id);}
+  }
+  function prepareNeighbors() {
+    const q=state.queue;
+    const ids=[q.order[q.index-1],q.order[q.index+1],q.repeat==='all'?q.order[0]:null];
+    for(const id of new Set(ids))if(id&&byId(id))mediaURL(id).catch(()=>{});
   }
   function primeAudio() {
     if(audioUnlocked || priming)return;
@@ -43,17 +49,24 @@ export function createPlayback(context) {
   async function loadTrack(id,autoplay=true,restoreTime=0) {
     if(!byId(id))return;
     const generation=++playGeneration;playIntent=autoplay;
-    // Do not associate the previous song's position with a pending queue item.
-    if(activeId!==id)clearMediaSession();
+    // Keep the native session alive while disk access finishes. Only its
+    // position is cleared; ending the session here can suspend a locked page.
+    metadataReady=false;updatePositionState();
     if(autoplay)primeAudio();
     try {
-      const url=await mediaURL(id);if(generation!==playGeneration||!byId(id)||state.queue.current!==id)return;
-      priming=false;activeId=id;audio.src=url;
-      const restore=()=>{if(generation===playGeneration&&restoreTime>0&&Number.isFinite(audio.duration)){audio.currentTime=Math.min(restoreTime,Math.max(0,audio.duration-0.5));updateProgress();updatePositionState();}};
-      audio.addEventListener('loadedmetadata',restore,{once:true});
-      audio.load();context.enhancements?.loadWave(id);renderPlayer();if(nowDialog.open)renderNowPlaying();highlightCurrent();if(!$('#queuePanel').hidden)renderQueue();updateMediaSession();saveSession();
-      if(playIntent){try{await audio.play();}catch(e){if(generation===playGeneration&&e.name!=='AbortError'){playIntent=false;toast(e.name==='NotAllowedError'?'Tap Play to start listening.':'This browser could not play this audio format. Try MP3 or AAC/M4A.',true);}}}
-      const next=state.queue.order[state.queue.index+1];if(next)mediaURL(next).catch(()=>{});
+      // Cached neighbors must set the source and call play inside the media
+      // action itself, without an await that gives WebKit a suspension point.
+      const url=mediaURLs.get(id)||await mediaURL(id);if(generation!==playGeneration||!byId(id)||state.queue.current!==id)return;
+      priming=false;activeId=id;restorePosition=restoreTime;audio.src=url;
+      audio.load();
+      const started=playIntent?audio.play().catch(e=>{
+        if(generation===playGeneration&&e.name!=='AbortError'){
+          playIntent=false;updatePlaybackState();updatePositionState();
+          toast(e.name==='NotAllowedError'?'Tap Play to start listening.':'This browser could not play this audio format. Try MP3 or AAC/M4A.',true);
+        }
+      }):null;
+      prepareNeighbors();context.enhancements?.loadWave(id);renderPlayer();if(nowDialog.open)renderNowPlaying();highlightCurrent();if(!$('#queuePanel').hidden)renderQueue();updateMediaSession();saveSession();
+      if(started)await started;
     }catch(e){if(generation!==playGeneration)return;unloadAudio();toast(e.message||'Could not load this song. Import it again.',true);}
     renderPlayer();
   }
@@ -75,14 +88,14 @@ export function createPlayback(context) {
   function nextTrack(manual=true) {
     const id=state.queue.next(state.tracks,manual);
     if(!id){playIntent=false;audio.pause();renderPlayer();updatePlaybackState();updatePositionState();saveSession();return;}
-    loadTrack(id,true);
+    return loadTrack(id,true);
   }
   function previousTrack(restart=true) {
-    if(restart&&audio.currentTime>3){seekTo(0);return;}
-    const id=state.queue.previous();if(id){loadTrack(id,true);}
+    if(restart&&hasCurrentMetadata()&&audio.currentTime>3){seekTo(0);return;}
+    const id=state.queue.previous();if(id){return loadTrack(id,true);}
   }
   function toggleShuffle() {
-    state.queue.setShuffle(!state.queue.shuffle,state.tracks);saveSession();renderPlayer();if(!$('#queuePanel').hidden)renderQueue();
+    state.queue.setShuffle(!state.queue.shuffle,state.tracks);prepareNeighbors();saveSession();renderPlayer();if(!$('#queuePanel').hidden)renderQueue();
     toast(state.queue.shuffle?'Balanced shuffle on. Every song once, artists spread out.':'Shuffle off.');
   }
   function cycleRepeat() {
@@ -101,6 +114,13 @@ export function createPlayback(context) {
   function loadedTrack() {
     return !priming&&audio.getAttribute('src')&&activeId===state.queue.current?byId(activeId):null;
   }
+  function hasCurrentMetadata() {
+    return !!loadedTrack()&&metadataReady&&audio.readyState>=1&&audio.currentSrc===mediaURLs.get(activeId);
+  }
+  function progress() {
+    const ready=hasCurrentMetadata();
+    return {ready,duration:ready&&Number.isFinite(audio.duration)?audio.duration:byId(state.queue.current)?.duration||0,time:ready&&Number.isFinite(audio.currentTime)?audio.currentTime:0};
+  }
   function updatePlaybackState() {
     if(!navigator.mediaSession)return;
     try{navigator.mediaSession.playbackState=loadedTrack()?(!audio.paused&&!audio.ended?'playing':'paused'):'none';}catch{}
@@ -115,13 +135,13 @@ export function createPlayback(context) {
     const session=navigator.mediaSession;if(!session?.setPositionState)return;
     const {duration,currentTime,playbackRate}=audio;
     try{
-      if(loadedTrack()&&Number.isFinite(duration)&&duration>0&&Number.isFinite(currentTime)&&Number.isFinite(playbackRate)&&playbackRate>0)
+      if(hasCurrentMetadata()&&Number.isFinite(duration)&&duration>0&&Number.isFinite(currentTime)&&Number.isFinite(playbackRate)&&playbackRate>0)
         session.setPositionState({duration,playbackRate,position:Math.min(duration,Math.max(0,currentTime))});
       else session.setPositionState();
     }catch{}
   }
   function seekTo(time) {
-    if(!loadedTrack()||!Number.isFinite(time)||!Number.isFinite(audio.duration)||audio.duration<=0)return;
+    if(!hasCurrentMetadata()||!Number.isFinite(time)||!Number.isFinite(audio.duration)||audio.duration<=0)return;
     audio.currentTime=Math.min(audio.duration,Math.max(0,time));
     updateProgress();updatePositionState();saveSession();
   }
@@ -129,7 +149,7 @@ export function createPlayback(context) {
     playIntent=false;audio.pause();updatePlaybackState();updatePositionState();saveSession();
   }
   function unloadAudio() {
-    playGeneration++;playIntent=false;priming=false;activeId=null;
+    playGeneration++;playIntent=false;priming=false;activeId=null;metadataReady=false;restorePosition=0;
     audio.pause();audio.removeAttribute('src');audio.load();clearMediaSession();
   }
   function saveSession(immediate=false) {
@@ -143,12 +163,18 @@ export function createPlayback(context) {
   if(eventsBound)return;eventsBound=true;
   window.addEventListener('pagehide',()=>saveSession(true));
   audio.addEventListener('play',()=>{audioUnlocked=true;if(priming)return;playIntent=true;renderPlayer();updatePlaybackState();updatePositionState();});
-  audio.addEventListener('pause',()=>{if(priming)return;playIntent=false;renderPlayer();saveSession();updatePlaybackState();updatePositionState();});
+  audio.addEventListener('pause',()=>{if(priming||!audio.paused||!hasCurrentMetadata())return;playIntent=false;renderPlayer();saveSession();updatePlaybackState();updatePositionState();});
   audio.addEventListener('ended',()=>{if(!priming)nextTrack(false);});
-  audio.addEventListener('timeupdate',()=>{if(priming)return;updateProgress();updatePositionState();if(Date.now()-lastSavedAt>5000){lastSavedAt=Date.now();saveSession();}});
-  audio.addEventListener('loadedmetadata',()=>{if(priming)return;const t=byId(activeId);if(t&&Number.isFinite(audio.duration)&&audio.duration>0){t.duration=audio.duration;db.put('tracks',t).catch(()=>{});$$(`[data-duration-id="${t.id}"]`).forEach(el=>el.textContent=formatTime(t.duration));}updateProgress();updateMediaSession();});
+  audio.addEventListener('timeupdate',()=>{if(!hasCurrentMetadata())return;updateProgress();updatePositionState();if(Date.now()-lastSavedAt>5000){lastSavedAt=Date.now();saveSession();}});
+  audio.addEventListener('loadedmetadata',()=>{
+    if(!loadedTrack()||audio.readyState<1||audio.currentSrc!==mediaURLs.get(activeId))return;
+    metadataReady=true;
+    if(restorePosition>0&&Number.isFinite(audio.duration))audio.currentTime=Math.min(restorePosition,Math.max(0,audio.duration-0.5));
+    restorePosition=0;
+    const t=byId(activeId);if(t&&Number.isFinite(audio.duration)&&audio.duration>0){t.duration=audio.duration;db.put('tracks',t).catch(()=>{});$$(`[data-duration-id="${t.id}"]`).forEach(el=>el.textContent=formatTime(t.duration));}updateProgress();updateMediaSession();
+  });
   for(const name of ['seeking','seeked','durationchange','ratechange'])audio.addEventListener(name,()=>{if(priming)return;updateProgress();updatePositionState();if(name==='seeked')saveSession();});
-  audio.addEventListener('emptied',()=>clearMediaSession());
+  audio.addEventListener('emptied',()=>{if(audio.readyState>=1)return;metadataReady=false;if(activeId)updatePositionState();else clearMediaSession();});
   audio.addEventListener('error',()=>{if(priming||!audio.getAttribute('src'))return;unloadAudio();renderPlayer();toast('This file cannot be played in this browser. Try another song or an MP3/AAC copy.',true);});
   audio.addEventListener('volumechange',()=>{renderPlayer();saveSession();});
   }
@@ -184,8 +210,8 @@ export function createPlayback(context) {
   'shuffle':()=>toggleShuffle(),
   'repeat':()=>cycleRepeat(),
   'mute':()=>{audio.muted=!audio.muted;renderPlayer();saveSession();},
-  'play-next':b=>{state.queue.add(b.dataset.id,true);modal.close();saveSession();if(!$('#queuePanel').hidden)renderQueue();toast('Added to play next.');},
-  'add-queue':b=>{state.queue.add(b.dataset.id);modal.close();saveSession();if(!$('#queuePanel').hidden)renderQueue();toast('Added to queue.');},
+  'play-next':b=>{state.queue.add(b.dataset.id,true);prepareNeighbors();modal.close();saveSession();if(!$('#queuePanel').hidden)renderQueue();toast('Added to play next.');},
+  'add-queue':b=>{state.queue.add(b.dataset.id);prepareNeighbors();modal.close();saveSession();if(!$('#queuePanel').hidden)renderQueue();toast('Added to queue.');},
   'queue-jump':b=>{const i=Number(b.dataset.index);if(!Number.isInteger(i)||!byId(state.queue.order[i]))return;state.queue.index=i;loadTrack(state.queue.current,true);},
   'queue-remove':b=>{state.queue.removeAt(Number(b.dataset.index));saveSession();renderQueue();},
   'queue-up':b=>{const i=Number(b.dataset.index),q=state.queue;if(i<=q.index+1||i>=q.order.length)return;[q.order[i-1],q.order[i]]=[q.order[i],q.order[i-1]];saveSession();renderQueue();},
@@ -193,5 +219,5 @@ export function createPlayback(context) {
   'remove-track':async b=>{const id=b.dataset.id;await db.deleteTrack(id);if(id===activeId||id===state.queue.current)unloadAudio();state.tracks.delete(id);state.playlists.forEach(p=>{p.trackIds=p.trackIds.filter(x=>x!==id);});state.queue.prune(new Set(state.tracks.keys()));if(mediaURLs.has(id)){URL.revokeObjectURL(mediaURLs.get(id));mediaURLs.delete(id);}ui.releaseArtwork(id);modal.close();render();saveSession();toast('Song removed from this device.');}
   };
 
-  return { isCurrentView, loadTrack, togglePlay, nextTrack, previousTrack, toggleShuffle, updatePositionState, updateMediaSession, saveSession, activeTrackId, isPriming, setupMediaSession, bindEvents, actions };
+  return { isCurrentView, loadTrack, togglePlay, nextTrack, previousTrack, toggleShuffle, progress, updatePositionState, updateMediaSession, saveSession, activeTrackId, isPriming, setupMediaSession, bindEvents, actions };
 }

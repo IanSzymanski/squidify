@@ -217,10 +217,9 @@ export function createInterface(context) {
   }
   function updateProgress() {
     if(state.pickerOpen)return;
-    const duration=playback.activeTrackId()===state.queue.current&&Number.isFinite(audio.duration)&&!playback.isPriming()?audio.duration:byId(state.queue.current)?.duration||0;
-    const current=playback.activeTrackId()===state.queue.current&&!playback.isPriming()?audio.currentTime||0:0;
+    const {duration,time:current,ready}=playback.progress();
     $$('.elapsed').forEach(el=>el.textContent=formatTime(current));$$('.duration').forEach(el=>el.textContent=duration?formatTime(duration):'0:00');
-    $$('[data-seek]').forEach(el=>{if(el.dataset.dragging)return;el.disabled=!duration||!audio.src;el.max=duration||100;el.value=current;el.style.setProperty('--pct',`${duration?current/duration*100:0}%`);el.setAttribute('aria-valuetext',`${formatTime(current)} of ${formatTime(duration||0)}`);});
+    $$('[data-seek]').forEach(el=>{if(el.dataset.dragging)return;el.disabled=!duration||!ready;el.max=duration||100;el.value=current;el.style.setProperty('--pct',`${duration?current/duration*100:0}%`);el.setAttribute('aria-valuetext',`${formatTime(current)} of ${formatTime(duration||0)}`);});
     updatePositionState();
   }
   function renderNowPlaying() {
@@ -235,7 +234,8 @@ export function createInterface(context) {
   }
   function renderOfflineBadge() {
     const badge=$('#offlineBadge');badge.classList.toggle('ready',state.shellReady);
-    badge.innerHTML=icon(state.shellReady?'check':'download')+`<span>${state.shellReady?(navigator.onLine?'Offline ready':'Listening offline'):'Offline setup'}</span>`;
+    badge.classList.toggle('downloading',!!state.updateDownloading);
+    badge.innerHTML=icon(state.updateDownloading?'download':state.shellReady?'check':'download')+`<span>${state.updateDownloading?'Downloading…':state.shellReady?(navigator.onLine?'Offline ready':'Listening offline'):'Offline setup'}</span>`;
   }
 
   function bindEvents(actions) {

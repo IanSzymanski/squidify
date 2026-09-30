@@ -25,8 +25,11 @@ class Element {
   showModal(){this.open=true;}close(){this.open=false;}focus(){}click(){this.clicks=(this.clicks||0)+1;}append(...children){this.children=children;}querySelectorAll(){return [];}querySelector(){return new Element();}
 }
 class FakeAudio extends Element {
-  constructor(){super();this.src='';this.paused=true;this.ended=false;this.currentTime=0;this.duration=120;this.volume=1;this.muted=false;this.playbackRate=1;}
-  async play(){this.paused=false;this.ended=false;this.emit('play');}pause(){const old=this.paused;this.paused=true;if(!old)this.emit('pause');}load(){this.currentTime=0;this.ended=false;if(this.src){this.emit('loadedmetadata');this.onloadedmetadata?.();}}
+  constructor(){super();this.src='';this.currentSrc='';this.readyState=0;this.paused=true;this.ended=false;this.currentTime=0;this.duration=NaN;this.volume=1;this.muted=false;this.playbackRate=1;this.playCalls=[];}
+  async play(){this.beforePlay?.();this.playCalls.push(this.src);this.paused=false;this.ended=false;this.emit('play');}
+  pause(){const old=this.paused;this.paused=true;if(!old)this.emit('pause');}
+  load(){this.readyState=0;this.currentTime=0;this.ended=false;this.pause();this.currentSrc='';this.duration=NaN;this.emit('emptied');if(this.src&&!this.deferMetadata)this.finishMetadata(this.nextDuration??120);}
+  finishMetadata(duration){this.currentSrc=this.src;this.readyState=1;this.duration=duration;this.emit('loadedmetadata');this.onloadedmetadata?.();}
 }
 
 async function mediaFixture(t,options={}) {
@@ -36,6 +39,66 @@ async function mediaFixture(t,options={}) {
   return harness(t,db,{random:()=>0.5,...options});
 }
 const settlePlayback=()=>new Promise(resolve=>setImmediate(resolve));
+
+test('locked Next and Previous start the preloaded source during the native action without ending its session',async t=>{
+  const app=await mediaFixture(t),audio=app.element('#audio');await app.mediaActions.play();await settlePlayback();
+  let inNativeAction=false,metadata=app.mediaSession.metadata,playbackState=app.mediaSession.playbackState;
+  const changes=[];
+  Object.defineProperty(app.mediaSession,'metadata',{get:()=>metadata,set:value=>{metadata=value;changes.push(['metadata',value]);}});
+  Object.defineProperty(app.mediaSession,'playbackState',{get:()=>playbackState,set:value=>{playbackState=value;changes.push(['state',value]);}});
+  audio.beforePlay=()=>assert.equal(inNativeAction,true,'play must run before returning from the external action');
+  const firstSrc=audio.src,calls=audio.playCalls.length;
+  inNativeAction=true;const next=app.mediaActions.nexttrack();inNativeAction=false;
+  assert.notEqual(audio.src,firstSrc);assert.equal(audio.playCalls.length,calls+1);assert.equal(audio.paused,false);
+  await next;await settlePlayback();
+  inNativeAction=true;const previous=app.mediaActions.previoustrack();inNativeAction=false;
+  assert.equal(audio.src,firstSrc);assert.equal(audio.playCalls.length,calls+2);await previous;
+  assert.equal(changes.some(([name,value])=>name==='metadata'?value===null:value==='none'),false);
+});
+
+test('track switches reject stale duration and position until metadata belongs to the new source',async t=>{
+  const app=await mediaFixture(t),audio=app.element('#audio');await app.mediaActions.play();await settlePlayback();
+  const oldSrc=audio.src;app.state.tracks.get('b').duration=37;audio.deferMetadata=true;
+  const next=app.mediaActions.nexttrack();
+  assert.equal(app.mediaSession.metadata.title,'Song b');assert.equal(app.positions.at(-1),undefined);
+  assert.deepEqual({...app.playback.progress()},{ready:false,duration:37,time:0});
+  audio.readyState=1;audio.currentSrc=oldSrc;audio.duration=120;audio.currentTime=24;
+  audio.emit('loadedmetadata');audio.emit('timeupdate');audio.emit('durationchange');
+  assert.equal(app.state.tracks.get('b').duration,37);assert.equal(app.positions.at(-1),undefined);
+  audio.currentTime=0;audio.finishMetadata(73);await next;
+  assert.equal(app.positions.at(-1).duration,73);assert.equal(app.positions.at(-1).position,0);
+  assert.equal(app.state.tracks.get('b').duration,73);assert.equal(app.playback.progress().ready,true);
+  audio.emit('pause');assert.equal(audio.paused,false,'a queued pause from the replaced source cannot cancel current playback');
+  audio.deferMetadata=true;const skip=app.mediaActions.nexttrack();app.mediaActions.pause();audio.finishMetadata(91);await skip;
+  assert.equal(audio.paused,true);assert.equal(app.mediaSession.playbackState,'paused');assert.equal(app.positions.at(-1).duration,91);
+});
+
+function workerFixture(active=true) {
+  const worker=new Element();worker.state='installing';
+  const registration=new Element();registration.active=active?{}:null;registration.installing=worker;registration.waiting=null;
+  const serviceWorker={register:async()=>registration,ready:new Promise(()=>{}),getRegistration:async()=>registration,addEventListener(){}};
+  const finish=state=>{worker.state=state;registration.installing=null;if(state==='installed')registration.waiting=worker;worker.emit('statechange');};
+  return {worker,registration,serviceWorker,finish};
+}
+test('an update download remains visible alongside toasts then becomes ready without activating or reloading',async t=>{
+  const sw=workerFixture(),app=await harness(t,memoryStore(),{serviceWorker:sw.serviceWorker});await settlePlayback();
+  assert.equal(app.state.updateDownloading,true);assert.equal(app.element('#updateStatus').hidden,false);
+  assert.equal(app.element('#updateStatusText').textContent,'Downloading update…');
+  assert.match(app.element('#offlineBadge').innerHTML,/Downloading/);
+  app.ui.toast('Added to queue.');assert.equal(app.element('#updateStatus').hidden,false);
+  sw.registration.emit('updatefound');assert.equal(sw.worker.events.statechange.length,1);
+  sw.finish('installed');assert.equal(app.element('#updateStatus').hidden,true);assert.equal(app.state.updateDownloading,false);
+  assert.match(app.element('#toast').textContent,/Update ready.*Close all/);
+  assert.equal(app.db.stores.settings.has('installedShellVersion'),false,'download is not an installation');
+});
+test('download failure clears the indicator and first install uses offline setup wording',async t=>{
+  const sw=workerFixture(),app=await harness(t,memoryStore(),{serviceWorker:sw.serviceWorker});await settlePlayback();
+  sw.finish('redundant');assert.equal(app.element('#updateStatus').hidden,true);assert.equal(app.state.updateDownloading,false);
+  assert.match(app.element('#toast').textContent,/download interrupted/);assert.equal(app.element('#toast').classList.contains('error'),true);
+  const first=workerFixture(false),fresh=await harness(t,memoryStore(),{serviceWorker:first.serviceWorker});await settlePlayback();
+  assert.equal(fresh.element('#updateStatusText').textContent,'Preparing offline playback…');
+  first.finish('installed');assert.equal(fresh.element('#updateStatus').hidden,true);assert.equal(fresh.element('#toast').hidden,true);
+});
 
 test('media controls register once, remove seek offsets and resume without rebuilding the queue',async t=>{
   const app=await mediaFixture(t),audio=app.element('#audio'),order=[...app.state.queue.order],src=audio.src;
@@ -85,7 +148,7 @@ test('external Previous restarts after three seconds then follows the actual pla
 
 test('rapid skips perform one action each and publish only the latest loaded song',async t=>{
   const app=await mediaFixture(t);app.mediaActions.nexttrack();app.mediaActions.nexttrack();
-  assert.equal(app.state.queue.index,2);assert.equal(app.mediaSession.metadata,null);
+  assert.equal(app.state.queue.index,2);assert.equal(app.mediaSession.metadata.title,'Song b');
   assert.equal(app.positions.at(-1),undefined);await settlePlayback();
   assert.equal(app.playback.activeTrackId(),'c');assert.equal(app.mediaSession.metadata.title,'Song c');
   const audio=app.element('#audio');app.state.queue.index=0;await app.playback.loadTrack('a',false);
@@ -128,8 +191,9 @@ test('metadata and artwork refresh, and unloading or failed loading clears stale
   app.playback.updateMediaSession();assert.equal(app.mediaSession.metadata.title,'Renamed');
   assert.equal(app.mediaSession.metadata.artist,'Artist a');assert.equal(app.mediaSession.metadata.album,'Album a');
   assert.equal(app.mediaSession.metadata.artwork[0].src,'https://squidify.example/local-cover.png');
-  audio.emit('emptied');assert.equal(app.mediaSession.metadata,null);
-  audio.emit('loadedmetadata');assert.equal(app.mediaSession.metadata.title,'Renamed');
+  audio.readyState=0;audio.emit('emptied');assert.equal(app.positions.at(-1),undefined);
+  assert.equal(app.mediaSession.metadata.title,'Renamed','a source transition retains the native session');
+  audio.finishMetadata(120);assert.equal(app.mediaSession.metadata.title,'Renamed');
   await app.actions['remove-track']({dataset:{id:'a'}});
   assert.equal(app.mediaSession.metadata,null);assert.equal(app.mediaSession.playbackState,'none');assert.equal(app.positions.at(-1),undefined);
   app.state.queue.order.push('d');app.state.queue.index=2;app.db.stores.media.delete('d');await app.playback.loadTrack('d',false);
@@ -156,6 +220,7 @@ async function harness(t,db=memoryStore(),mediaOptions={}){
   const actions={},registrations=[],positions=[];
   const mediaSession={setActionHandler:(name,f)=>{registrations.push(name);if(mediaOptions.unsupported?.includes(name))throw new Error('Unsupported action');actions[name]=f;},setPositionState:value=>{if(mediaOptions.positionThrows)throw new Error('Unsupported position');positions.push(value);}};
   const navigator={userAgent:'Test',platform:'Test',maxTouchPoints:0,onLine:true,storage:{persist:async()=>true},mediaSession:mediaOptions.absent?undefined:mediaSession};
+  if(mediaOptions.serviceWorker)navigator.serviceWorker=mediaOptions.serviceWorker;
   if(mediaOptions.stateThrows)Object.defineProperty(mediaSession,'playbackState',{set(){throw new Error('Unsupported state');}});
   const context=vm.createContext({document,window,navigator,location,URL,Blob,File,TextEncoder,DataView,Uint8Array,ArrayBuffer,crypto:{subtle:webcrypto.subtle,randomUUID},Audio:FakeAudio,MediaMetadata:class{constructor(value){Object.assign(this,value);}},AbortController,FormData,matchMedia:()=>({matches:false}),console:{error(){}},setTimeout:(f,ms)=>{const timer=setTimeout(f,ms);timers.add(timer);return timer;},clearTimeout:id=>{clearTimeout(id);timers.delete(id);}});
   if(mediaOptions.random)context.Math=Object.assign(Object.create(Math),{random:mediaOptions.random});
@@ -303,16 +368,16 @@ test('installed-update toast is shown once, only for the running ready release',
   await app.offline.announceInstalled('squidify-shell-v5',true);
   assert.equal(app.element('#toast').hidden,true);
   assert.equal(app.db.stores.settings.has('installedShellVersion'),false);
-  await Promise.all([app.offline.announceInstalled('squidify-shell-v18',true),app.offline.announceInstalled('squidify-shell-v18',true)]);
+  await Promise.all([app.offline.announceInstalled('squidify-shell-v19',true),app.offline.announceInstalled('squidify-shell-v19',true)]);
   assert.match(app.element('#toast').textContent,/Squidify updated/);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v18');
-  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v18',true);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v19');
+  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v19',true);
   assert.equal(reopened.element('#toast').hidden,true);
 });
 test('a first install records its release without claiming an update',async t=>{
-  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v18',false);
+  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v19',false);
   assert.equal(app.element('#toast').hidden,true);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v18');
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v19');
 });
 
 

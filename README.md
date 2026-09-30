@@ -184,3 +184,22 @@ Verification: 40 automated tests cover playback/storage/gesture regressions,
 offline packaging, first-install versus upgrade notices, one-time notifications,
 and transition cancellation/reduced motion. Physical-device animation and Home
 Screen appearance remain device QA items.
+
+## Shell v19 — lock-screen playback correction
+
+A device report identified silent Next/Previous switches with stale duration in v18.
+The player now retains its native media session during source transitions, warms
+both neighboring songs, and calls play synchronously for cached external skips.
+Position and duration require metadata from the selected source; source-reset
+pause/empty events cannot cancel the new playback intent. The selected track's
+saved duration is used only for its in-app loading display.
+
+A persistent download notice and indeterminate progress bar track service-worker
+installation. It clears on completion or failure, coexists with other toasts, and
+does not force activation or reload. First installation uses separate offline-setup
+wording. Old clients acquire this indicator once v19 has been installed.
+
+Verification: 72 automated tests passed, including synchronous native-action
+startup, retained session, delayed and stale metadata, pause while loading, and
+update completion/failure. The audio harness models source reset, readyState,
+currentSrc and delayed metadata. Physical iPhone locked playback remains pending.
