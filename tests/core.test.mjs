@@ -50,6 +50,16 @@ test('play next moves a queued song without duplicating it; queue survives seria
   const restored=new PlayQueue(JSON.parse(JSON.stringify(queue)));assert.equal(restored.current,'3');assert.equal(restored.previous(),'0');
   restored.removeAt(1);assert.deepEqual(restored.order,['0','1','2']);
 });
+test('a prepared shuffle pass is stable, does not change playback, and refreshes after queue edits',()=>{
+  const queue=new PlayQueue({shuffle:true});queue.start(ids,'0',map);queue.index=queue.order.length-1;
+  const saved=queue.toJSON(),order=[...queue.order],first=queue.current;
+  const prepared=[...queue.prepareNextPass(map)];
+  assert.deepEqual(queue.prepareNextPass(map),prepared);assert.deepEqual(queue.order,order);assert.equal(queue.current,first);
+  assert.equal(Object.hasOwn(JSON.parse(JSON.stringify(queue)),'preparedPass'),false);
+  assert.equal(queue.next(map,true),prepared[0]);assert.deepEqual(queue.order,prepared);assert.equal(queue.preparedPass,null);
+  queue.prepareNextPass(map);queue.add('new');
+  assert.ok(queue.prepareNextPass(map).includes('new'));assert.equal(saved.shuffle,queue.shuffle);
+});
 test('removing an earlier library song preserves the current playback index',()=>{
   const queue=new PlayQueue();queue.start(['0','1','2'],'1',map);queue.prune(new Set(['1','2']));
   assert.equal(queue.current,'1');assert.equal(queue.index,0);assert.equal(queue.next(map),'2');

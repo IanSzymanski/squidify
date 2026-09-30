@@ -19,7 +19,25 @@ export function createPlayback(context) {
   const mediaURLs = new Map(), mediaPromises = new Map();
   let activeId = null, playGeneration = 0, playIntent = false, priming = false, audioUnlocked = false, stateTimer, lastSavedAt = 0;
   let eventsBound = false, mediaSessionBound = false;
-  let metadataReady = false, restorePosition = 0;
+  let metadataReady = false, restorePosition = 0, playbackStarted = false, categoryRecovery;
+
+  function musicSession(recover=false) {
+    clearTimeout(categoryRecovery);categoryRecovery=null;
+    try{
+      const session=navigator.audioSession;if(!session)return;
+      session.type='playback';
+      if(recover){
+        // WebKit 323104 reports a stale native category despite successful
+        // playback. A distinct category followed by playback re-arms it.
+        session.type='ambient';
+        categoryRecovery=setTimeout(()=>{categoryRecovery=null;try{session.type='playback';}catch{}},0);
+      }
+    }catch{}
+  }
+  function requestAudioPlay() {
+    musicSession(context.isIOS&&document.hidden);
+    return audio.play();
+  }
 
   async function mediaURL(id) {
     if(mediaURLs.has(id))return mediaURLs.get(id);
@@ -28,7 +46,7 @@ export function createPlayback(context) {
       const item=await db.get('media',id);
       if(!item?.blob)throw new Error('This song is no longer saved on this device. Import the file again.');
       const url=URL.createObjectURL(item.blob);mediaURLs.set(id,url);
-      for(const [key,value] of mediaURLs){if(mediaURLs.size<=4)break;if(key!==id&&key!==activeId&&key!==state.queue.order[state.queue.index+1]&&key!==state.queue.order[state.queue.index-1]){URL.revokeObjectURL(value);mediaURLs.delete(key);}}
+      for(const [key,value] of mediaURLs){if(mediaURLs.size<=5)break;if(key!==id&&key!==activeId&&key!==state.queue.order[state.queue.index+1]&&key!==state.queue.order[state.queue.index-1]&&key!==state.queue.preparedPass?.order[0]){URL.revokeObjectURL(value);mediaURLs.delete(key);}}
       return url;
     })();
     mediaPromises.set(id,promise);
@@ -36,7 +54,7 @@ export function createPlayback(context) {
   }
   function prepareNeighbors() {
     const q=state.queue;
-    const ids=[q.order[q.index-1],q.order[q.index+1],q.source[0]];
+    const ids=[q.order[q.index-1],q.order[q.index+1],q.prepareNextPass(state.tracks)[0]];
     for(const id of new Set(ids))if(id&&byId(id))mediaURL(id).catch(()=>{});
   }
   function primeAudio() {
@@ -48,20 +66,29 @@ export function createPlayback(context) {
   }
   async function loadTrack(id,autoplay=true,restoreTime=0) {
     if(!byId(id))return;
+    const wasPlaying=playbackStarted&&!audio.paused&&!audio.ended;
     const generation=++playGeneration;playIntent=autoplay;
     // Keep the native session alive while disk access finishes. Only its
     // position is cleared; ending the session here can suspend a locked page.
-    metadataReady=false;updatePositionState();
+    metadataReady=false;playbackStarted=false;updatePositionState();
     if(autoplay)primeAudio();
     try {
       // Cached neighbors must set the source and call play inside the media
       // action itself, without an await that gives WebKit a suspension point.
       const url=mediaURLs.get(id)||await mediaURL(id);if(generation!==playGeneration||!byId(id)||state.queue.current!==id)return;
-      priming=false;activeId=id;restorePosition=restoreTime;audio.src=url;
-      audio.load();
-      const started=playIntent?audio.play().catch(e=>{
+      const sameSource=activeId===id&&audio.currentSrc===url&&audio.readyState>=1;
+      priming=false;activeId=id;restorePosition=restoreTime;
+      if(sameSource){
+        // Reuse an already loaded source for single-song/repeat-one restarts.
+        metadataReady=true;playbackStarted=wasPlaying;audio.currentTime=restoreTime>0&&Number.isFinite(audio.duration)?Math.min(restoreTime,Math.max(0,audio.duration-0.5)):0;restorePosition=0;
+      }else{
+        // Assigning src already selects the new resource. An extra load()
+        // tears down the native player again during a lock-screen handoff.
+        audio.src=url;
+      }
+      const started=playIntent?requestAudioPlay().catch(e=>{
         if(generation===playGeneration&&e.name!=='AbortError'){
-          playIntent=false;updatePlaybackState();updatePositionState();
+          playIntent=false;playbackStarted=false;updatePlaybackState();updatePositionState();
           toast(e.name==='NotAllowedError'?'Tap Play to start listening.':'This browser could not play this audio format. Try MP3 or AAC/M4A.',true);
         }
       }):null;
@@ -82,15 +109,23 @@ export function createPlayback(context) {
     // Resume cannot reliably revive an ended WebKit source. A completed queue
     // starts a fresh pass through the same load-and-play path as manual Next.
     if(audio.ended&&loadedTrack()&&state.queue.index===state.queue.order.length-1)return nextTrack(true);
-    if(playIntent||!audio.paused){playIntent=false;audio.pause();return;}
+    if(playIntent||!audio.paused)return pausePlayback();
+    return resumePlayback();
+  }
+  async function resumePlayback() {
+    if(!state.tracks.size)return addMusicDialog();
+    if(audio.ended&&loadedTrack()&&state.queue.index===state.queue.order.length-1)return nextTrack(true);
     if(!state.queue.current)return startView();
+    // A repeated external Play also recovers an apparently playing but silent
+    // native session. It never toggles to Pause or rebuilds an active queue.
+    if(playIntent&&!loadedTrack()){musicSession(context.isIOS&&document.hidden);return;}
     if(activeId!==state.queue.current||!audio.src)return loadTrack(state.queue.current,true);
     playIntent=true;
-    try{await audio.play();}catch(e){playIntent=false;report(e,'Unable to play. Tap a song or try a different audio format.');}
+    try{await requestAudioPlay();}catch(e){playIntent=false;playbackStarted=false;updatePlaybackState();updatePositionState();report(e,'Unable to play. Tap a song or try a different audio format.');}
   }
   function nextTrack(manual=true) {
     const id=state.queue.next(state.tracks,manual);
-    if(!id){playIntent=false;audio.pause();renderPlayer();updatePlaybackState();updatePositionState();saveSession();return;}
+    if(!id){pausePlayback();renderPlayer();return;}
     return loadTrack(id,true);
   }
   function previousTrack(restart=true) {
@@ -126,7 +161,7 @@ export function createPlayback(context) {
   }
   function updatePlaybackState() {
     if(!navigator.mediaSession)return;
-    try{navigator.mediaSession.playbackState=loadedTrack()?(!audio.paused&&!audio.ended?'playing':'paused'):'none';}catch{}
+    try{navigator.mediaSession.playbackState=loadedTrack()?(playbackStarted&&!audio.paused&&!audio.ended?'playing':'paused'):'none';}catch{}
   }
   function clearMediaSession() {
     const session=navigator.mediaSession;if(!session)return;
@@ -138,7 +173,7 @@ export function createPlayback(context) {
     const session=navigator.mediaSession;if(!session?.setPositionState)return;
     const {duration,currentTime,playbackRate}=audio;
     try{
-      if(hasCurrentMetadata()&&Number.isFinite(duration)&&duration>0&&Number.isFinite(currentTime)&&Number.isFinite(playbackRate)&&playbackRate>0)
+      if(hasCurrentMetadata()&&(!playIntent||audio.paused||playbackStarted)&&Number.isFinite(duration)&&duration>0&&Number.isFinite(currentTime)&&Number.isFinite(playbackRate)&&playbackRate>0)
         session.setPositionState({duration,playbackRate,position:Math.min(duration,Math.max(0,currentTime))});
       else session.setPositionState();
     }catch{}
@@ -149,15 +184,15 @@ export function createPlayback(context) {
     updateProgress();updatePositionState();saveSession();
   }
   function pausePlayback() {
-    playIntent=false;audio.pause();updatePlaybackState();updatePositionState();saveSession();
+    playIntent=false;playbackStarted=false;if(categoryRecovery)musicSession();audio.pause();updatePlaybackState();updatePositionState();saveSession();
   }
   function unloadAudio() {
-    playGeneration++;playIntent=false;priming=false;activeId=null;metadataReady=false;restorePosition=0;
+    playGeneration++;playIntent=false;priming=false;activeId=null;metadataReady=false;restorePosition=0;playbackStarted=false;if(categoryRecovery)musicSession();
     audio.pause();audio.removeAttribute('src');audio.load();clearMediaSession();
   }
   function saveSession(immediate=false) {
     clearTimeout(stateTimer);
-    const write=()=>db.setSetting('session',{queue:state.queue.toJSON(),time:activeId===state.queue.current?audio.currentTime||0:0,volume:audio.volume,muted:audio.muted,sort:state.sort}).catch(()=>{});
+    const write=()=>db.setSetting('session',{queue:state.queue.toJSON(),time:hasCurrentMetadata()?audio.currentTime||0:0,volume:audio.volume,muted:audio.muted,sort:state.sort}).catch(()=>{});
     if(immediate)write();else stateTimer=setTimeout(write,250);
   }
 
@@ -165,8 +200,10 @@ export function createPlayback(context) {
   function bindEvents() {
   if(eventsBound)return;eventsBound=true;
   window.addEventListener('pagehide',()=>saveSession(true));
-  audio.addEventListener('play',()=>{audioUnlocked=true;if(priming)return;playIntent=true;renderPlayer();updatePlaybackState();updatePositionState();});
-  audio.addEventListener('pause',()=>{if(priming||!audio.paused||!hasCurrentMetadata())return;playIntent=false;renderPlayer();saveSession();updatePlaybackState();updatePositionState();});
+  audio.addEventListener('play',()=>{audioUnlocked=true;if(priming||audio.paused||!loadedTrack())return;playIntent=true;renderPlayer();updatePlaybackState();updatePositionState();});
+  audio.addEventListener('playing',()=>{if(!hasCurrentMetadata()||audio.paused||audio.ended)return;playbackStarted=true;renderPlayer();updatePlaybackState();updatePositionState();});
+  audio.addEventListener('waiting',()=>{if(!loadedTrack())return;playbackStarted=false;updatePlaybackState();updatePositionState();});
+  audio.addEventListener('pause',()=>{if(priming||!audio.paused||!hasCurrentMetadata())return;playIntent=false;playbackStarted=false;renderPlayer();saveSession();updatePlaybackState();updatePositionState();});
   audio.addEventListener('ended',()=>{if(!priming)nextTrack(false);});
   audio.addEventListener('timeupdate',()=>{if(!hasCurrentMetadata())return;updateProgress();updatePositionState();if(Date.now()-lastSavedAt>5000){lastSavedAt=Date.now();saveSession();}});
   audio.addEventListener('loadedmetadata',()=>{
@@ -189,7 +226,7 @@ export function createPlayback(context) {
     if(mediaSessionBound||typeof session?.setActionHandler!=='function')return;
     mediaSessionBound=true;
     const handlers={
-      play:()=>{if(audio.paused&&!playIntent)return togglePlay();},
+      play:()=>resumePlayback(),
       pause:()=>pausePlayback(),
       previoustrack:()=>previousTrack(),
       nexttrack:()=>nextTrack(),

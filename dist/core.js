@@ -60,13 +60,20 @@ export class PlayQueue {
     const future = this.order.slice(this.index + 1);
     this.order = [...past, ...(enabled ? balancedShuffle(future, tracks, past.slice(-2)) : [...new Set([...this.source, ...future])].filter(id => future.includes(id)))];
   }
+  prepareNextPass(tracks) {
+    // Reserve the exact next shuffle pass before a background restart needs
+    // its first file. This is transient preparation, not saved queue state.
+    const signature=JSON.stringify([this.source,this.shuffle,this.order.slice(-2)]);
+    if(this.preparedPass?.signature!==signature)
+      this.preparedPass={signature,order:this.shuffle?balancedShuffle(this.source,tracks,this.order.slice(-2)):[...this.source]};
+    return this.preparedPass.order;
+  }
   next(tracks, manual = false) {
     if (!manual && this.repeat === 'one' && this.current) return this.current;
     if (this.index + 1 < this.order.length) return this.order[++this.index];
     // A deliberate Next starts another pass even when automatic repeat is off.
     if ((manual || this.repeat === 'all') && this.source.length) {
-      const previous = this.order.slice(-2);
-      this.order = this.shuffle ? balancedShuffle(this.source, tracks, previous) : [...this.source];
+      this.order = [...this.prepareNextPass(tracks)];this.preparedPass=null;
       this.index = 0;
       return this.current;
     }

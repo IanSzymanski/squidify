@@ -237,3 +237,31 @@ Verification: 78 automated checks passed. Three new regression tests cover all
 Play entry points, single-song/shuffle passes, and synchronous lock-screen Play
 startup. Two of these tests failed against v20 before the fix. The v21 Play
 correction awaits user device confirmation.
+
+## Shell v22 — Native audio-session recovery
+
+The user reports that both lock-screen Play and Next now select the first song
+but remain silent while progress advances in the installed Home Screen app.
+Queue selection is working; the audible output failure remains a device issue.
+
+Playback requests now select the Audio Session API's music playback category
+where available. Hidden iOS startup cycles through ambient and restores playback
+on the next task to recover the stale native category reported in
+[WebKit 323104](https://bugs.webkit.org/show_bug.cgi?id=323104). That report matches
+the symptom, but does not establish the cause on the user's phone. Unsupported
+or throwing APIs fall back to normal HTML audio playback. External Play is
+idempotent and also requests recovery when the element claims it is playing.
+
+Source changes rely on src assignment's resource selection without a redundant
+load call. Single-song restarts reuse the loaded source. The exact first song of
+the next balanced shuffle pass is prepared and kept in the bounded media cache,
+so a completed long playlist can restart synchronously within a native action.
+Media Session playback and position updates wait for playing, with position
+cleared while buffering. Settings and the installed-update toast identify v22.
+
+Verification: all 85 automated checks passed, including seven added regressions
+for reserved shuffle passes, simulated native category faults, repeated external
+Play, Pause during recovery, unsupported APIs, delayed playing, long playlists
+and source reuse. Simulated output is not physical sound verification. Retest
+lock-screen Play and Next after natural playlist completion on v22; audible
+playback in the installed iPhone app remains unconfirmed.

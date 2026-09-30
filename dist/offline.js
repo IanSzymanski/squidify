@@ -1,5 +1,5 @@
 import * as db from './storage.js';
-import { SHELL_VERSION } from './release.js';
+import { SHELL_VERSION, RELEASE_LABEL } from './release.js';
 
 export function createOffline(context) {
   const { state, $ } = context;
@@ -26,7 +26,7 @@ export function createOffline(context) {
       const previous=await db.setting('installedShellVersion',null);
       if(previous===version)return;
       await db.setSetting('installedShellVersion',version);
-      if(previous || updated)context.ui.toast('Squidify updated. You’re on the latest version.');
+      if(previous || updated)context.ui.toast(`Squidify updated to ${RELEASE_LABEL}.`);
     })().catch(()=>{announcement=null;});
     return announcement;
   }
