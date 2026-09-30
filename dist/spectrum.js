@@ -12,24 +12,31 @@ export function spectrumAt(channel,center,sampleRate){
  }
  return levels;
 }
-export const followLevel=(current,target)=>current+(target-current)*(target>current?.78:.24);
+export const followLevel=(current,target)=>current+(target-current)*(target>current?.92:.48);
 
-// Twelve separated spectral zones, with low valleys between narrow Bézier peaks.
-// Both player sizes share this geometry; every peak still follows real bands.
-export function equalizerPoints(levels,width,height){
- const zones=12,baseline=height-3,amplitude=Math.max(1,height-8),points=[{x:0,y:baseline}];
+// Broad, soft spectral shoulders share raised valleys rather than isolated spikes.
+// Optional bounds keep the outer baseline still on the full-width player canvas.
+export function equalizerPoints(levels,width,height,motionStart=0,motionEnd=width){
+ const zones=12,baseline=height-3,amplitude=Math.max(1,height-8),points=[{x:0,y:baseline}],peaks=[];
+ const from=Math.max(0,Math.min(width,motionStart)),to=Math.max(from,Math.min(width,motionEnd));
+ if(to<=from)return [{x:0,y:baseline},{x:width,y:baseline}];
  for(let zone=0;zone<zones;zone++){
   const start=zone*BAND_COUNT/zones,end=(zone+1)*BAND_COUNT/zones;let energy=0;
   for(let b=Math.floor(start);b<Math.ceil(end);b++){
    const weight=Math.min(end,b+1)-Math.max(start,b);
    energy+=(levels[b]||0)**2*weight;
   }
-  const peak=Math.min(1,Math.sqrt(energy/(end-start)));
-  const left=zone/zones*width,right=(zone+1)/zones*width;
-  points.push({x:left+(right-left)*.24,y:baseline-peak*amplitude*.08});
-  points.push({x:(left+right)/2,y:baseline-peak*amplitude});
-  points.push({x:left+(right-left)*.76,y:baseline-peak*amplitude*.08});
-  points.push({x:right,y:baseline});
+  peaks.push(Math.min(1,Math.sqrt(energy/(end-start))));
  }
+ if(from>0)points.push({x:from,y:baseline});
+ for(let zone=0;zone<zones;zone++){
+  const peak=peaks[zone],left=from+zone/zones*(to-from),right=from+(zone+1)/zones*(to-from);
+  points.push({x:left+(right-left)*.24,y:baseline-peak*amplitude*.94});
+  points.push({x:(left+right)/2,y:baseline-peak*amplitude});
+  points.push({x:left+(right-left)*.76,y:baseline-peak*amplitude*.94});
+  const valley=zone===zones-1?0:Math.min(peak,peaks[zone+1])*.78;
+  points.push({x:right,y:baseline-valley*amplitude});
+ }
+ if(to<width)points.push({x:width,y:baseline});
  return points;
 }
