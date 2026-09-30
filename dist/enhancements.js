@@ -1,4 +1,4 @@
-import { BAND_COUNT, spectrumAt, followLevel, equalizerPoints, equalizerTangents, EQ_CONTROLS, EQ_DEFAULTS, normalizeEqualizerSettings } from './spectrum.js';
+import { BAND_COUNT, spectrumAt, followLevel, equalizerPoints, equalizerTangents, equalizerMotionBounds, equalizerCanvasHeight, EQ_CONTROLS, EQ_DEFAULTS, normalizeEqualizerSettings } from './spectrum.js';
 import { icon } from './icons.js';
 import * as db from './storage.js';
 import { escapeHTML as esc } from './core.js';
@@ -146,16 +146,12 @@ export function createEnhancements(context) {
     const source=$('[data-eq-source]');if(source&&state.view==='settings')source.textContent=previewPaused?'Preview paused':reduced?'Static preview · reduced motion':demo?'Demo signal · play a supported song to preview its audio':'Live · current song';
     $$('.audio-wave').forEach(canvas=>{
       const ctx=canvas.getContext('2d');if(!ctx)return;
+      const full=canvas.classList?.contains('full-wave'),largePreview=canvas.classList?.contains('eq-preview-wave');
+      if(full&&canvas.style){const height=`${equalizerCanvasHeight(equalizer.height)}px`;if(canvas.style.height!==height)canvas.style.height=height;}
       const rect=canvas.getBoundingClientRect(),ratio=Math.min(2,window.devicePixelRatio||1),w=rect.width,h=rect.height;
       if(w<2||h<2){ctx.clearRect(0,0,canvas.width,canvas.height);return;}
       const preview=canvas.classList?.contains('eq-preview-wave')||canvas.classList?.contains('eq-preview-mini');
-      let motionStart=0,motionEnd=w;
-      if(canvas.classList?.contains('eq-preview-wave')){motionStart=w*.2;motionEnd=w*.8;}
-      if(canvas.classList?.contains('full-wave')){
-        const dialog=canvas.closest('#nowDialog'),left=dialog?.querySelector('.now-footer .output-control'),right=dialog?.querySelector('.now-footer [data-action="queue"]');
-        motionStart=Math.min(84,w/2);motionEnd=Math.max(motionStart,w-84);
-        if(left&&right){const a=left.getBoundingClientRect(),b=right.getBoundingClientRect();motionStart=a.right-rect.left+12;motionEnd=b.left-rect.left-12;}
-      }
+      const [motionStart,motionEnd]=equalizerMotionBounds(w,equalizer.activeWidth);
       if(canvas.width!==Math.round(w*ratio)||canvas.height!==Math.round(h*ratio)){canvas.width=Math.round(w*ratio);canvas.height=Math.round(h*ratio);}
       ctx.setTransform(ratio,0,0,ratio,0,0);ctx.clearRect(0,0,w,h);
       canvas.setAttribute('aria-label',preview?(demo?'Demo equalizer preview':'Live audio equalizer preview'):samples?'Audio equalizer':'Equalizer unavailable for this file');
@@ -167,7 +163,10 @@ export function createEnhancements(context) {
 
       });
       if(preview&&!previewPaused&&!reduced)previewAnimating=true;
-      const points=equalizerPoints(levels,w,h,motionStart,motionEnd,equalizer);
+      // Keep the preview's footprint fixed while showing the full 4× height
+      // range; dragging a slider never moves that slider beneath the finger.
+      const referenceHeight=full?70:largePreview?8+(h-8)/4:h;
+      const points=equalizerPoints(levels,w,h,motionStart,motionEnd,equalizer,referenceHeight);
       const tangents=equalizerTangents(points);
       const gradient=ctx.createLinearGradient(0,0,w,0);gradient.addColorStop(0,'#0eedb5');gradient.addColorStop(.5,'#63a4ef');gradient.addColorStop(1,'#ae00ff');
       const curve=()=>{ctx.beginPath();ctx.moveTo(points[0].x,points[0].y);for(let i=0;i<points.length-1;i++){const a=points[i],b=points[i+1],third=(b.x-a.x)/3;ctx.bezierCurveTo(a.x+third,a.y+tangents[i]*third,b.x-third,b.y-tangents[i+1]*third,b.x,b.y);}};

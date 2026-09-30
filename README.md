@@ -27,13 +27,22 @@ The shell is cached by a service worker. A secure origin (HTTPS, or localhost fo
 
 ## Equalizer tuning
 
-Settings includes a live full-size and mini preview with eleven controls: zone
-count, peak contrast, sensitivity, peak width, edge fade, attack/release speeds,
+Settings includes a live full-size and mini preview with twelve controls: zone
+count, active section width, peak contrast, sensitivity, peak width, edge fade, attack/release speeds,
 height, glow, fill and line thickness. Adjustments apply immediately to both
 players, save to the device's existing settings store, and can be reset together.
 The default 30% edge fade tapers each end of the active span into the protected
 stationary baseline using a smooth envelope. Neighboring zones join directly
 without manufactured boundary dips.
+
+Active section width is centered and measured against the entire canvas: 100%
+uses the full player width and 10% leaves a narrow moving strip in the middle.
+It replaces the previous button-based motion boundaries. Peak height reaches
+400% by growing the full player's canvas upward, without moving the controls;
+the mini visualization stays within its icon. Existing settings keep their saved
+values and receive the new width default of 60%. Full and mini player song titles
+stay on one line, fade at the trailing edge, and scroll only when they overflow.
+The marquee pauses at each end and stops for reduced-motion preferences.
 
 The preview uses the playing track's decoded spectrum when available, otherwise
 a labeled demo signal. Demo values never enter the actual player. Pause preview

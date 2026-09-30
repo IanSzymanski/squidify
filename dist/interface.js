@@ -1,4 +1,4 @@
-import { createMotion, createSearchScroll, createPlayerMotion } from './motion.js';
+import { createMotion, createSearchScroll, createPlayerMotion, measureTitleMarquees } from './motion.js';
 import { bindGestures } from './gestures.js';
 import * as db from './storage.js';
 import { formatTime, formatBytes, escapeHTML as esc } from './core.js';
@@ -10,6 +10,14 @@ export function createInterface(context) {
   const motion = createMotion(main);
   const searchScroll=createSearchScroll(),playerMotion=createPlayerMotion(nowDialog);
   let routeKey;
+  let titleFrame=0;
+  function refreshTitleMarquees(){
+    if(typeof requestAnimationFrame!=='function'){measureTitleMarquees(document);return;}
+    if(titleFrame)return;
+    titleFrame=requestAnimationFrame(()=>{titleFrame=0;measureTitleMarquees(document);});
+  }
+  window.addEventListener('resize',refreshTitleMarquees);
+  document.fonts?.ready.then(refreshTitleMarquees);
   const toggleLike = (...args) => context.playlists.toggleLike(...args);
   const chooseFolder = (...args) => context.importer.chooseFolder(...args);
   const selectFiles = (...args) => context.importer.selectFiles(...args);
@@ -192,7 +200,9 @@ export function createInterface(context) {
   function renderPlayer() {
     if(state.pickerOpen)return;
     const t=byId(state.queue.current),playing=!audio.paused&&!playback.isPriming();
-    $('#nowTitle').textContent=t?.title||'Nothing playing yet';$('#nowArtist').textContent=t?.artist||'Choose something from your library';
+    const title=t?.title||'Nothing playing yet',titleNode=$('#nowTitle');
+    if(titleNode.dataset.title!==title){titleNode.innerHTML=`<span class="scroll-title-text">${esc(title)}</span>`;titleNode.dataset.title=title;titleNode.setAttribute('title',title);}
+    $('#nowArtist').textContent=t?.artist||'Choose something from your library';
     const art=playerArtwork(t);$('#nowArtwork').innerHTML=art;
     $('#playerLike').disabled=!t;$('#playerLike').classList.toggle('liked',!!t?.liked);$('#playerLike').setAttribute('aria-label',t?.liked?'Unlike current song':'Like current song');
     $$('[data-action="toggle-play"]').forEach(b=>{b.innerHTML=icon(playing?'pause':'play');b.setAttribute('aria-label',playing?'Pause':'Play');});
@@ -203,6 +213,7 @@ export function createInterface(context) {
     $('#muteButton').innerHTML=icon(audio.muted?'muted':'volume');$('#muteButton').setAttribute('aria-label',audio.muted?'Unmute':'Mute');
     $('#volumeInput').value=audio.muted?0:audio.volume;$('#volumeInput').style.setProperty('--pct',`${(audio.muted?0:audio.volume)*100}%`);
     highlightCurrent();updateProgress();context.enhancements?.renderOutput();context.enhancements?.drawWave();
+    refreshTitleMarquees();
   }
   function updateProgress() {
     if(state.pickerOpen)return;
@@ -214,7 +225,7 @@ export function createInterface(context) {
   }
   function renderNowPlaying() {
     const t=byId(state.queue.current);if(!t)return;
-    nowDialog.innerHTML=`<div class="now-top"><button class="icon-button" data-action="close-now" aria-label="Close now playing">${icon('down')}</button><p>${esc(state.queue.context)}</p><button class="icon-button" data-action="current-menu" aria-label="Song options">${icon('vertical')}</button></div>${playerArtwork(t,'full-art')}<div class="full-title-row"><div><h2 id="fullTitle">${esc(t.title)}</h2><p>${esc(t.artist)}</p></div><button class="icon-button like-button ${t.liked?'liked':''}" data-action="like-current" aria-label="${t.liked?'Unlike':'Like'} song" aria-pressed="${!!t.liked}">${icon('heart')}</button></div><div class="scrubber"><span class="time elapsed">0:00</span><input data-seek type="range" min="0" max="100" step=".1" value="0" aria-label="Playback position"><span class="time duration">0:00</span></div><div class="playback-buttons"><button class="icon-button shuffle-control" data-action="shuffle" aria-label="Balanced shuffle">${icon('shuffle')}</button><button class="icon-button" data-action="previous" aria-label="Previous song">${icon('previous')}</button><button class="main-play" data-action="toggle-play" aria-label="Play">${icon('play')}</button><button class="icon-button" data-action="next" aria-label="Next song">${icon('next')}</button><button class="icon-button repeat-control" data-action="repeat" aria-label="Repeat off">${icon('repeat')}<b hidden>1</b></button></div><div class="now-footer">${outputControl()}<button class="icon-button" data-action="queue" aria-label="Open queue">${icon('queue')}</button></div><canvas class="audio-wave full-wave" width="780" height="140" aria-label="Audio waveform"></canvas>`;
+    nowDialog.innerHTML=`<div class="now-top"><button class="icon-button" data-action="close-now" aria-label="Close now playing">${icon('down')}</button><p>${esc(state.queue.context)}</p><button class="icon-button" data-action="current-menu" aria-label="Song options">${icon('vertical')}</button></div>${playerArtwork(t,'full-art')}<div class="full-title-row"><div><h2 id="fullTitle" class="scrolling-title" title="${esc(t.title)}"><span class="scroll-title-text">${esc(t.title)}</span></h2><p>${esc(t.artist)}</p></div><button class="icon-button like-button ${t.liked?'liked':''}" data-action="like-current" aria-label="${t.liked?'Unlike':'Like'} song" aria-pressed="${!!t.liked}">${icon('heart')}</button></div><div class="scrubber"><span class="time elapsed">0:00</span><input data-seek type="range" min="0" max="100" step=".1" value="0" aria-label="Playback position"><span class="time duration">0:00</span></div><div class="playback-buttons"><button class="icon-button shuffle-control" data-action="shuffle" aria-label="Balanced shuffle">${icon('shuffle')}</button><button class="icon-button" data-action="previous" aria-label="Previous song">${icon('previous')}</button><button class="main-play" data-action="toggle-play" aria-label="Play">${icon('play')}</button><button class="icon-button" data-action="next" aria-label="Next song">${icon('next')}</button><button class="icon-button repeat-control" data-action="repeat" aria-label="Repeat off">${icon('repeat')}<b hidden>1</b></button></div><div class="now-footer">${outputControl()}<button class="icon-button" data-action="queue" aria-label="Open queue">${icon('queue')}</button></div><canvas class="audio-wave full-wave" width="780" height="140" aria-label="Audio waveform"></canvas>`;
     renderPlayer();
   }
   function renderQueue() {

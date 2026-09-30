@@ -204,7 +204,7 @@ main{flex:1;min-height:0;overflow-y:auto;overscroll-behavior-y:contain;-webkit-o
 .eq-heading{flex-wrap:wrap;margin-bottom:20px}.eq-heading h2{margin:0 0 8px}.settings-card .eq-heading p{margin:0;font-size:14px}
 .eq-preview{position:sticky;top:0;z-index:2;background:#101218;border:1px solid #30333e;border-radius:14px;padding:14px 18px;margin-bottom:24px;box-shadow:0 10px 30px #0005}
 .eq-preview-heading{font-size:14px;color:var(--muted);min-height:40px}.eq-preview-heading .button{flex-shrink:0;font-size:14px}
-.eq-preview .eq-preview-wave{width:100%;height:120px;max-width:none;opacity:1}
+.eq-preview .eq-preview-wave{width:100%;height:180px;max-width:none;opacity:1}
 .eq-mini-row{justify-content:flex-end;font-size:14px;color:var(--muted);padding-top:10px}
 .eq-preview .eq-preview-mini{width:22px;height:22px;opacity:1}
 .eq-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px 32px}
@@ -217,3 +217,17 @@ main{flex:1;min-height:0;overflow-y:auto;overscroll-behavior-y:contain;-webkit-o
 .player::before{content:'';position:absolute;inset:0 12px auto;height:1px;background:var(--iris);opacity:.7;pointer-events:none}
 .brand-mark{margin-right:3px}
 .mobile-brand{gap:2px}
+/* Fixed title height; only overflowing text travels, with a pause at each end. */
+.full-title-row h2.scrolling-title,.track-summary strong.scrolling-title{display:block;max-width:100%;min-width:0;white-space:nowrap;overflow:hidden;overflow-wrap:normal;text-overflow:clip;line-height:1.25;height:1.25em}
+.scroll-title-text{display:inline-block;width:max-content;max-width:none;white-space:nowrap;vertical-align:top}
+.scrolling-title[data-overflow=true]{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 22px),transparent);mask-image:linear-gradient(to right,#000 calc(100% - 22px),transparent)}
+.scrolling-title[data-overflow=true]>.scroll-title-text{animation:title-overflow var(--title-duration,10s) linear infinite alternate}
+@keyframes title-overflow{0%,15%{transform:translateX(0)}85%,100%{transform:translateX(calc(-1 * var(--title-travel,0px)))}}
+.page-hidden .scroll-title-text{animation-play-state:paused!important}
+@media(prefers-reduced-motion:reduce){.scrolling-title>.scroll-title-text{animation:none!important}}
+/* The canvas grows upward without consuming layout space or intercepting taps. */
+#nowDialog{isolation:isolate}
+#nowDialog>.full-wave{z-index:0}
+#nowDialog>:not(.full-wave){position:relative;z-index:1}
+#nowDialog .now-footer .icon-button{background:#10121beb;border-radius:50%}
+.full-title-row p{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

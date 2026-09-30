@@ -1,4 +1,14 @@
 // Modules rise into place; route and playback actions never wait on animation.
+export function measureTitleMarquees(root){
+ for(const title of root.querySelectorAll('.scrolling-title')){
+  const text=title.querySelector('.scroll-title-text');if(!text||!title.clientWidth)continue;
+  const overflow=Math.max(0,text.scrollWidth-title.clientWidth);
+  title.dataset.overflow=String(overflow>1);
+  title.style.setProperty('--title-travel',`${overflow+24}px`);
+  title.style.setProperty('--title-duration',`${Math.max(7,(overflow+24)/28+4)}s`);
+ }
+}
+
 export function createMotion(main) {
   let entrances=[];
   const reduce=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;

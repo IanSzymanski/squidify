@@ -64,13 +64,18 @@ test('equalizer settings apply through input events, persist across reopening, a
  const slider=app.element('#eq-edgeFade');slider.dataset.eq='edgeFade';slider.value='45';
  app.emitDocument('input',{target:slider});
  assert.equal(app.element('#eq-value-edgeFade').textContent,'45%');
+ app.enhancements.updateEqualizer('activeWidth',100);app.enhancements.updateEqualizer('height',400);
  await app.enhancements.saveSettings();
  assert.equal(app.db.stores.settings.get('equalizer').value.edgeFade,45);
  const again=await harness(t,app.db);again.state.view='settings';again.render();
  assert.match(again.element('#main').innerHTML,/id="eq-edgeFade"[^>]*value="45"/);
+ assert.match(again.element('#main').innerHTML,/id="eq-activeWidth"[^>]*value="100"/);
+ assert.match(again.element('#main').innerHTML,/id="eq-height"[^>]*value="400"/);
  await again.actions['reset-equalizer']();
  assert.equal(app.db.stores.settings.get('equalizer').value.edgeFade,30);
  assert.equal(again.element('#eq-edgeFade').value,30);
+ assert.equal(app.db.stores.settings.get('equalizer').value.activeWidth,60);
+ assert.equal(app.db.stores.settings.get('equalizer').value.height,100);
 });
 test('settings demo draws without music while the real player stays quiet, including paused-preview tuning',async t=>{
  const app=await harness(t);app.state.view='settings';
@@ -175,16 +180,16 @@ test('installed-update toast is shown once, only for the running ready release',
   await app.offline.announceInstalled('squidify-shell-v5',true);
   assert.equal(app.element('#toast').hidden,true);
   assert.equal(app.db.stores.settings.has('installedShellVersion'),false);
-  await Promise.all([app.offline.announceInstalled('squidify-shell-v16',true),app.offline.announceInstalled('squidify-shell-v16',true)]);
+  await Promise.all([app.offline.announceInstalled('squidify-shell-v17',true),app.offline.announceInstalled('squidify-shell-v17',true)]);
   assert.match(app.element('#toast').textContent,/Squidify updated/);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v16');
-  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v16',true);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v17');
+  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v17',true);
   assert.equal(reopened.element('#toast').hidden,true);
 });
 test('a first install records its release without claiming an update',async t=>{
-  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v16',false);
+  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v17',false);
   assert.equal(app.element('#toast').hidden,true);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v16');
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v17');
 });
 
 

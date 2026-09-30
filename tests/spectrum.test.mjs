@@ -1,7 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spectrumAt, followLevel, BAND_COUNT } from '../dist/spectrum.js';
-import { EQ_DEFAULTS, normalizeEqualizerSettings, equalizerPoints, equalizerTangents } from '../dist/spectrum.js';
+import { EQ_DEFAULTS, normalizeEqualizerSettings, equalizerPoints, equalizerTangents, equalizerMotionBounds, equalizerCanvasHeight } from '../dist/spectrum.js';
+
+test('active width spans the whole surface at 100% and centers a 10% strip at every size',()=>{
+ for(const width of [22,390,768]){
+  assert.deepEqual(equalizerMotionBounds(width,100),[0,width]);
+  const [start,end]=equalizerMotionBounds(width,10);
+  assert.ok(Math.abs((end-start)-width*.1)<1e-10);
+  assert.equal((start+end)/2,width/2);
+  const points=equalizerPoints(Array(18).fill(1),width,70,start,end);
+  assert.ok(points.filter(p=>p.x<=start||p.x>=end).every(p=>p.y===67));
+ }
+});
+test('400% height makes full peaks four times taller without clipping compact canvases',()=>{
+ const levels=Array(18).fill(1),settings={...EQ_DEFAULTS,height:400};
+ const normal=equalizerPoints(levels,390,70);
+ const canvasHeight=equalizerCanvasHeight(settings.height);
+ const tall=equalizerPoints(levels,390,canvasHeight,0,390,settings,70);
+ const amplitude=(points,height)=>height-3-Math.min(...points.map(p=>p.y));
+ assert.equal(amplitude(tall,canvasHeight),4*amplitude(normal,70));
+ assert.ok(tall.every(p=>p.y>=5));
+ assert.ok(equalizerPoints(levels,22,22,0,22,settings).every(p=>p.y>=5&&p.y<=19));
+});
 
 test('edge fade eases into the active area while preserving a level center and fixed outer line',()=>{
  const points=equalizerPoints(Array(18).fill(1),390,70,84,306);

@@ -86,6 +86,6 @@ test('manifest and runtime files stay fully packaged without CDN dependencies',a
 test('worker reports an upgrade after replacing an older shell, including empty libraries',async()=>{
   const w=await workerHarness();w.stores.set('squidify-shell-v5',new Map());
   await w.lifecycle('install');await w.lifecycle('activate');
-  const result=await w.message('CHECK_OFFLINE');assert.equal(result.ready,true);assert.equal(result.updated,true);assert.equal(result.version,'squidify-shell-v16');
+  const result=await w.message('CHECK_OFFLINE');assert.equal(result.ready,true);assert.equal(result.updated,true);assert.equal(result.version,'squidify-shell-v17');
   const fresh=await workerHarness();await fresh.lifecycle('install');await fresh.lifecycle('activate');assert.equal((await fresh.message('CHECK_OFFLINE')).updated,false);
 });

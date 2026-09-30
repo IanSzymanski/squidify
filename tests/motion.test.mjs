@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createMotion, createSearchScroll, createPlayerMotion } from '../dist/motion.js';
+import { createMotion, createSearchScroll, createPlayerMotion, measureTitleMarquees } from '../dist/motion.js';
+test('overflow titles travel far enough to expose the ending and stop scrolling when they fit',()=>{
+ const styles={},text={scrollWidth:600},title={clientWidth:250,dataset:{},querySelector:()=>text,style:{setProperty:(k,v)=>styles[k]=v}};
+ const root={querySelectorAll:()=>[title]};measureTitleMarquees(root);
+ assert.equal(title.dataset.overflow,'true');assert.equal(styles['--title-travel'],'374px');
+ assert.ok(parseFloat(styles['--title-duration'])>10);
+ title.clientWidth=700;measureTitleMarquees(root);assert.equal(title.dataset.overflow,'false');
+ title.clientWidth=0;measureTitleMarquees(root);assert.equal(title.dataset.overflow,'false','hidden titles wait until measurable');
+});
 function env(t,reduced=false){const old={matchMedia:globalThis.matchMedia,document:globalThis.document};globalThis.matchMedia=()=>({matches:reduced});globalThis.document={hidden:false};t.after(()=>Object.assign(globalThis,old));}
 test('routes commit immediately and repeated navigation cancels old entrances',t=>{
  env(t);let cancelled=0,animated=0,page='';const el={animate(){animated++;return{cancel(){cancelled++;}};}};
