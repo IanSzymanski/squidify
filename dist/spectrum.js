@@ -14,14 +14,17 @@ export function spectrumAt(channel,center,sampleRate){
 }
 export const followLevel=(current,target)=>current+(target-current)*(target>current?.78:.24);
 
-// Six separated spectral zones, with low valleys between narrow Bézier peaks.
+// Twelve separated spectral zones, with low valleys between narrow Bézier peaks.
 // Both player sizes share this geometry; every peak still follows real bands.
 export function equalizerPoints(levels,width,height){
- const zones=6,baseline=height-3,amplitude=Math.max(1,height-8),points=[{x:0,y:baseline}];
+ const zones=12,baseline=height-3,amplitude=Math.max(1,height-8),points=[{x:0,y:baseline}];
  for(let zone=0;zone<zones;zone++){
-  const start=zone*3;let energy=0;
-  for(let b=0;b<3;b++)energy+=(levels[start+b]||0)**2;
-  const peak=Math.min(1,Math.sqrt(energy/3));
+  const start=zone*BAND_COUNT/zones,end=(zone+1)*BAND_COUNT/zones;let energy=0;
+  for(let b=Math.floor(start);b<Math.ceil(end);b++){
+   const weight=Math.min(end,b+1)-Math.max(start,b);
+   energy+=(levels[b]||0)**2*weight;
+  }
+  const peak=Math.min(1,Math.sqrt(energy/(end-start)));
   const left=zone/zones*width,right=(zone+1)/zones*width;
   points.push({x:left+(right-left)*.24,y:baseline-peak*amplitude*.08});
   points.push({x:(left+right)/2,y:baseline-peak*amplitude});

@@ -12,11 +12,11 @@ test('sharp accents attack quickly while release remains smooth',()=>{
  assert.ok(followLevel(0,1)>.7);assert.ok(followLevel(1,0)>.5);assert.equal(followLevel(0,0),0);
 });
 
-test('connected curve retains six narrow peaks and baseline valleys under full-band energy',async()=>{
+test('connected curve retains twelve narrow peaks and baseline valleys under full-band energy',async()=>{
  const {equalizerPoints}=await import('../dist/spectrum.js');
  const points=equalizerPoints(Array(18).fill(1),300,70);
- assert.equal(points.filter(p=>p.y===8-3).length,6);
- assert.equal(points.filter(p=>p.y===67).length,7);
+ assert.equal(points.filter(p=>p.y===8-3).length,12);
+ assert.equal(points.filter(p=>p.y===67).length,13);
  assert.ok(points.every((p,i)=>!i||p.x>points[i-1].x));
  assert.ok(equalizerPoints(Array(18).fill(0),22,22).every(p=>p.y===19));
 });

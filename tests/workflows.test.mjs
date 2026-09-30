@@ -145,16 +145,16 @@ test('installed-update toast is shown once, only for the running ready release',
   await app.offline.announceInstalled('squidify-shell-v5',true);
   assert.equal(app.element('#toast').hidden,true);
   assert.equal(app.db.stores.settings.has('installedShellVersion'),false);
-  await Promise.all([app.offline.announceInstalled('squidify-shell-v12',true),app.offline.announceInstalled('squidify-shell-v12',true)]);
+  await Promise.all([app.offline.announceInstalled('squidify-shell-v13',true),app.offline.announceInstalled('squidify-shell-v13',true)]);
   assert.match(app.element('#toast').textContent,/Squidify updated/);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v12');
-  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v12',true);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v13');
+  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v13',true);
   assert.equal(reopened.element('#toast').hidden,true);
 });
 test('a first install records its release without claiming an update',async t=>{
-  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v12',false);
+  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v13',false);
   assert.equal(app.element('#toast').hidden,true);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v12');
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v13');
 });
 
 
