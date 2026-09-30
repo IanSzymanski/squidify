@@ -11,7 +11,7 @@ A device-local music player and installable offline web app. No remote music ser
 
 Importing creates an offline copy in IndexedDB. Folder handles are remembered where `showDirectoryPicker` and structured cloning of handles are supported. Other browsers use folder/file inputs. Cloud-only files must be downloaded before an offline import. Original files are never modified.
 
-The shell is cached by a service worker. A secure origin (HTTPS, or localhost for development) is required; opening index.html through file:// does not install an offline app. Every runtime asset is packaged locally. Files are played through object URLs on one persistent HTML audio element; Media Session provides supported Lock Screen/headphone actions.
+The shell is cached by a service worker. A secure origin (HTTPS, or localhost for development) is required; opening index.html through file:// does not install an offline app. Every runtime asset is packaged locally. Files are played through object URLs with one active native HTML audio element. On iOS, one additional inactive element prepares playlist restarts before the current source ends. Media Session provides supported Lock Screen/headphone actions.
 
 ## Features
 
@@ -303,3 +303,37 @@ start a song, return Home and lock normally, then test track changes/completion.
 
 References: [Apple ambient category](https://developer.apple.com/it/documentation/audiotoolbox/kaudiosessioncategory_ambientsound),
 [Media Session declared state and routing](https://w3c.github.io/mediasession/#playback-state).
+
+## Shell v24 — Prepared playlist restart after native completion
+
+The user confirms that v23 restores audible lock-screen/background playback and
+Next works when pressed before the final song ends. Restarting after completion
+still stalls. The supplied 71-event report identifies the failure precisely:
+at 18:02:45 UTC the final song ends; at 18:02:47 remote Play selects the first
+song and calls play. Its metadata loads with readyState 1, but no playing event
+follows, then stalled fires. After returning to the foreground at 18:02:51 the
+player reaches readyState 4. There is no media error. The native audio-session
+state property is unavailable in this browser, so no category fault is inferred.
+
+Caching a Blob URL did not preload playable samples into a native player. On
+iOS, v24 prepares the exact first song of the next pass in one inactive native
+audio element with preload=auto while the current song runs. After an ended
+source, Play/Next can activate this prepared player synchronously without a src
+replacement, provided it already has future data. Ordinary pre-end skips keep
+the working current-player path. Non-iOS playback is unchanged. If the browser
+declines preloading, the ordinary load path remains available; preparation is
+a browser hint and real iPhone readiness must be confirmed.
+
+The UI and controls use a stable audio interface which forwards only the active
+element's events. Old ended/pause/error events cannot affect the new track.
+Volume, mute, rate, metadata/duration and position follow the activated player.
+The pair is reused across passes, and standby audio never plays by itself.
+There are no ambient category changes, silent keep-alive loops or background
+timers needed for this handoff. Reports include restart readiness and the
+restart-prepared/restart-source-load path to establish which branch ran.
+
+Verification: 93 checks pass. A replay of the observed metadata-only background
+load failure fails against v23 and passes with the prepared restart, covering
+both Play and Next across repeated completions. Additional checks cover native
+event isolation, preference transfer, unavailable preparation, cleanup and
+offline module availability. User confirmation of v24 audibility is pending.

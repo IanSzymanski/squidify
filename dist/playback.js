@@ -51,8 +51,14 @@ export function createPlayback(context) {
   }
   function prepareNeighbors() {
     const q=state.queue;
-    const ids=[q.order[q.index-1],q.order[q.index+1],q.prepareNextPass(state.tracks)[0]];
+    const restartId=q.prepareNextPass(state.tracks)[0];
+    const ids=[q.order[q.index-1],q.order[q.index+1],restartId];
     for(const id of new Set(ids))if(id&&byId(id))mediaURL(id).catch(()=>{});
+    if(audio.prepareRestart){
+      if(!restartId){audio.clearRestart();return;}
+      const prepare=url=>{if(byId(restartId)&&state.queue.prepareNextPass(state.tracks)[0]===restartId)try{audio.prepareRestart(url);}catch{playbackReport.record('restart-prepare-failed');}};
+      if(mediaURLs.has(restartId))prepare(mediaURLs.get(restartId));else mediaURL(restartId).then(prepare).catch(()=>{});
+    }
   }
   function primeAudio() {
     if(audioUnlocked || priming)return;
@@ -64,6 +70,7 @@ export function createPlayback(context) {
   }
   async function loadTrack(id,autoplay=true,restoreTime=0) {
     if(!byId(id))return;
+    const sourceEnded=audio.ended;
     const wasPlaying=playbackStarted&&!audio.paused&&!audio.ended;
     const generation=++playGeneration;playIntent=autoplay;
     // Keep the native session alive while disk access finishes. Only its
@@ -74,7 +81,9 @@ export function createPlayback(context) {
       // Cached neighbors must set the source and call play inside the media
       // action itself, without an await that gives WebKit a suspension point.
       const url=mediaURLs.get(id)||await mediaURL(id);if(generation!==playGeneration||!byId(id)||state.queue.current!==id)return;
-      const sameSource=activeId===id&&audio.currentSrc===url&&audio.readyState>=1;
+      const prepared=autoplay&&sourceEnded&&!!audio.activateRestart?.(url);
+      if(sourceEnded)playbackReport.record(prepared?'restart-prepared':'restart-source-load');
+      const sameSource=prepared||(activeId===id&&audio.currentSrc===url&&audio.readyState>=1);
       priming=false;activeId=id;restorePosition=restoreTime;
       if(sameSource){
         // Reuse an already loaded source for single-song/repeat-one restarts.
@@ -84,6 +93,7 @@ export function createPlayback(context) {
         // tears down the native player again during a lock-screen handoff.
         audio.src=url;
       }
+      if(prepared)refreshMetadata();
       const started=playIntent?requestAudioPlay().catch(e=>{
         if(generation===playGeneration&&e.name!=='AbortError'){
           playIntent=false;playbackStarted=false;updatePlaybackState();updatePositionState();
@@ -195,12 +205,19 @@ export function createPlayback(context) {
   }
   function unloadAudio() {
     playGeneration++;playIntent=false;priming=false;activeId=null;metadataReady=false;restorePosition=0;playbackStarted=false;
-    audio.pause();audio.removeAttribute('src');audio.load();clearMediaSession();
+    audio.pause();audio.removeAttribute('src');audio.load();audio.clearRestart?.();clearMediaSession();
   }
   function saveSession(immediate=false) {
     clearTimeout(stateTimer);
     const write=()=>db.setSetting('session',{queue:state.queue.toJSON(),time:hasCurrentMetadata()?audio.currentTime||0:0,volume:audio.volume,muted:audio.muted,sort:state.sort}).catch(()=>{});
     if(immediate)write();else stateTimer=setTimeout(write,250);
+  }
+  function refreshMetadata(){
+    if(!loadedTrack()||audio.readyState<1||audio.currentSrc!==mediaURLs.get(activeId))return;
+    metadataReady=true;
+    if(restorePosition>0&&Number.isFinite(audio.duration))audio.currentTime=Math.min(restorePosition,Math.max(0,audio.duration-0.5));
+    restorePosition=0;
+    const t=byId(activeId);if(t&&Number.isFinite(audio.duration)&&audio.duration>0){t.duration=audio.duration;db.put('tracks',t).catch(()=>{});$$(`[data-duration-id="${t.id}"]`).forEach(el=>el.textContent=formatTime(t.duration));}updateProgress();updateMediaSession();
   }
 
 
@@ -220,13 +237,7 @@ export function createPlayback(context) {
   audio.addEventListener('pause',()=>{if(priming||!audio.paused||!hasCurrentMetadata())return;playIntent=false;playbackStarted=false;renderPlayer();saveSession();updatePlaybackState();updatePositionState();});
   audio.addEventListener('ended',()=>{if(!priming)nextTrack(false);});
   audio.addEventListener('timeupdate',()=>{if(!hasCurrentMetadata())return;updateProgress();updatePositionState();if(Date.now()-lastSavedAt>5000){lastSavedAt=Date.now();saveSession();}});
-  audio.addEventListener('loadedmetadata',()=>{
-    if(!loadedTrack()||audio.readyState<1||audio.currentSrc!==mediaURLs.get(activeId))return;
-    metadataReady=true;
-    if(restorePosition>0&&Number.isFinite(audio.duration))audio.currentTime=Math.min(restorePosition,Math.max(0,audio.duration-0.5));
-    restorePosition=0;
-    const t=byId(activeId);if(t&&Number.isFinite(audio.duration)&&audio.duration>0){t.duration=audio.duration;db.put('tracks',t).catch(()=>{});$$(`[data-duration-id="${t.id}"]`).forEach(el=>el.textContent=formatTime(t.duration));}updateProgress();updateMediaSession();
-  });
+  audio.addEventListener('loadedmetadata',refreshMetadata);
   for(const name of ['seeking','seeked','durationchange','ratechange'])audio.addEventListener(name,()=>{if(priming)return;updateProgress();updatePositionState();if(name==='seeked')saveSession();});
   audio.addEventListener('emptied',()=>{if(audio.readyState>=1)return;metadataReady=false;if(activeId)updatePositionState();else clearMediaSession();});
   audio.addEventListener('error',()=>{if(priming||!audio.getAttribute('src'))return;unloadAudio();renderPlayer();toast('This file cannot be played in this browser. Try another song or an MP3/AAC copy.',true);});
@@ -271,10 +282,10 @@ export function createPlayback(context) {
   'play-next':b=>{state.queue.add(b.dataset.id,true);prepareNeighbors();modal.close();saveSession();if(!$('#queuePanel').hidden)renderQueue();toast('Added to play next.');},
   'add-queue':b=>{state.queue.add(b.dataset.id);prepareNeighbors();modal.close();saveSession();if(!$('#queuePanel').hidden)renderQueue();toast('Added to queue.');},
   'queue-jump':b=>{const i=Number(b.dataset.index);if(!Number.isInteger(i)||!byId(state.queue.order[i]))return;state.queue.index=i;loadTrack(state.queue.current,true);},
-  'queue-remove':b=>{state.queue.removeAt(Number(b.dataset.index));saveSession();renderQueue();},
+  'queue-remove':b=>{state.queue.removeAt(Number(b.dataset.index));prepareNeighbors();saveSession();renderQueue();},
   'queue-up':b=>{const i=Number(b.dataset.index),q=state.queue;if(i<=q.index+1||i>=q.order.length)return;[q.order[i-1],q.order[i]]=[q.order[i],q.order[i-1]];saveSession();renderQueue();},
-  'clear-queue':()=>{state.queue.order=state.queue.order.slice(0,state.queue.index+1);state.queue.source=[...new Set(state.queue.order)];saveSession();renderQueue();},
-  'remove-track':async b=>{const id=b.dataset.id;await db.deleteTrack(id);if(id===activeId||id===state.queue.current)unloadAudio();state.tracks.delete(id);state.playlists.forEach(p=>{p.trackIds=p.trackIds.filter(x=>x!==id);});state.queue.prune(new Set(state.tracks.keys()));if(mediaURLs.has(id)){URL.revokeObjectURL(mediaURLs.get(id));mediaURLs.delete(id);}ui.releaseArtwork(id);modal.close();render();saveSession();toast('Song removed from this device.');}
+  'clear-queue':()=>{state.queue.order=state.queue.order.slice(0,state.queue.index+1);state.queue.source=[...new Set(state.queue.order)];prepareNeighbors();saveSession();renderQueue();},
+  'remove-track':async b=>{const id=b.dataset.id;await db.deleteTrack(id);if(id===activeId||id===state.queue.current)unloadAudio();state.tracks.delete(id);state.playlists.forEach(p=>{p.trackIds=p.trackIds.filter(x=>x!==id);});state.queue.prune(new Set(state.tracks.keys()));prepareNeighbors();if(mediaURLs.has(id)){URL.revokeObjectURL(mediaURLs.get(id));mediaURLs.delete(id);}ui.releaseArtwork(id);modal.close();render();saveSession();toast('Song removed from this device.');}
   };
 
   return { isCurrentView, loadTrack, togglePlay, nextTrack, previousTrack, toggleShuffle, progress, updatePositionState, updateMediaSession, saveSession, activeTrackId, isPriming, setupMediaSession, bindEvents, reportPanel:playbackReport.panel, actions };

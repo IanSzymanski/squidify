@@ -21,6 +21,7 @@ class Element {
   constructor(){this.innerHTML='';this.textContent='';this.dataset={};this.hidden=false;this.open=false;this.value='';this.disabled=false;this.attrs={};this.events={};this.style={setProperty(){}};const classes=new Set();this.classList={toggle:(name,force)=>{const next=force??!classes.has(name);if(next)classes.add(name);else classes.delete(name);},contains:n=>classes.has(n),add:n=>classes.add(n),remove:n=>classes.delete(n)};}
   setAttribute(k,v){this.attrs[k]=v;}removeAttribute(k){delete this.attrs[k];if(k==='src')this.src='';}getAttribute(k){return k==='src'?this.src:this.attrs[k];}
   addEventListener(n,f,options){(this.events[n]||=[]).push({f,once:options?.once});}
+  removeEventListener(n,f){this.events[n]=(this.events[n]||[]).filter(entry=>entry.f!==f);}
   emit(n){const callbacks=[...(this.events[n]||[])];this.events[n]=(this.events[n]||[]).filter(x=>!x.once);for(const {f}of callbacks)f({target:this});}
   showModal(){this.open=true;}close(){this.open=false;}focus(){}click(){this.clicks=(this.clicks||0)+1;}append(...children){this.children=children;}querySelectorAll(){return [];}querySelector(){return new Element();}
 }
@@ -32,8 +33,8 @@ class FakeAudio extends Element {
   async play(){this.beforePlay?.();this.playCalls.push(this.src);this.paused=false;this.ended=false;this.emit('play');if(this.readyState>=3&&!this.deferPlaying)this.emit('playing');}
   pause(){const old=this.paused;this.paused=true;if(!old)this.emit('pause');}
   load(){this.loadCalls++;this.selectSource();}
-  selectSource(){this.readyState=0;this.currentTime=0;this.ended=false;this.pause();this.currentSrc='';this.duration=NaN;this.emit('emptied');if(this.src&&!this.deferMetadata)this.finishMetadata(this.nextDuration??120);}
-  finishMetadata(duration){this.currentSrc=this.src;this.readyState=4;this.duration=duration;this.emit('loadedmetadata');this.onloadedmetadata?.();if(!this.paused&&!this.deferPlaying)this.emit('playing');}
+  selectSource(){const blocked=this.blockFreshLoad?.();this.sourceSelections=(this.sourceSelections||0)+1;this.readyState=0;this.currentTime=0;this.ended=false;this.pause();this.currentSrc='';this.duration=NaN;this.emit('emptied');if(this.src&&!this.deferMetadata)this.finishMetadata(this.nextDuration??120,blocked?1:4);}
+  finishMetadata(duration,ready=4){this.currentSrc=this.src;this.readyState=ready;this.duration=duration;this.emit('loadedmetadata');this.onloadedmetadata?.();if(this.readyState>=3&&!this.paused&&!this.deferPlaying)this.emit('playing');}
 }
 
 async function mediaFixture(t,options={}) {
@@ -52,7 +53,7 @@ function musicSessionFixture(){
 
 test('hidden iOS playlist restarts retain playback category before any timer can run',async t=>{
   for(const action of ['play','nexttrack']){
-    const native=musicSessionFixture(),app=await mediaFixture(t,{isIOS:true,audioSession:native.audioSession}),audio=app.element('#audio');
+    const native=musicSessionFixture(),app=await mediaFixture(t,{isIOS:true,audioSession:native.audioSession}),audio=app.audio;
     app.state.queue.index=2;await app.playback.loadTrack('c',true);await settlePlayback();
     audio.currentTime=audio.duration;audio.ended=true;audio.paused=true;audio.emit('ended');await settlePlayback();
     app.setHidden(true);
@@ -120,7 +121,7 @@ test('playback reports retain background events locally with bounded history and
   await app.mediaActions.play();app.setHidden(true);app.emitDocument('visibilitychange',{});audio.pause();
   app.setHidden(false);app.emitDocument('visibilitychange',{});app.actions['playback-report']();await app.actions['copy-playback-report']();
   const report=JSON.parse(copied);assert.ok(report.events.some(x=>x.event==='hidden'));assert.ok(report.events.some(x=>x.event==='pause'&&x.hidden));
-  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v23');
+  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v24');
   for(let i=0;i<100;i++)audio.emit('stalled');await app.actions['copy-playback-report']();assert.equal(JSON.parse(copied).events.length,80);
   const reopened=await mediaFixture(t,{localStorage,clipboard:{writeText:async value=>{copied=value;}}});await reopened.actions['copy-playback-report']();
   assert.ok(JSON.parse(copied).events.some(x=>x.event==='stalled'));assert.ok(values.size);
@@ -137,6 +138,33 @@ test('a long shuffled playlist preloads the exact next pass for synchronous lock
   let inAction=false;audio.beforePlay=()=>assert.equal(inAction,true,'the shuffled restart file stays cached beyond the five-source limit');
   inAction=true;const restarted=app.mediaActions.play();inAction=false;await restarted;
   assert.deepEqual([...app.state.queue.order],prepared);assert.equal(app.state.queue.current,prepared[0]);assert.equal(audio.paused,false);assert.equal(audio.loadCalls,0);
+});
+test('completed iOS playlists use prepared samples when fresh background loads stall at metadata',async t=>{
+  for(const control of ['play','nexttrack']){
+    const app=await mediaFixture(t,{isIOS:true,stallFreshLoadsWhenHidden:true,standbyDuration:77}),audio=app.audio;
+    for(let pass=0;pass<2;pass++){
+      app.state.queue.index=2;await app.playback.loadTrack('c',true);await settlePlayback();
+      assert.equal(app.mediaSession.metadata.title,'Song c','standby metadata cannot overwrite the active song');
+      app.setHidden(true);audio.currentTime=audio.duration;audio.ended=true;audio.paused=true;audio.emit('pause');audio.emit('ended');
+      await app.mediaActions[control]();
+      assert.ok(audio.readyState>=3,'restart must not enter the reported HAVE_METADATA stall');
+      assert.equal(audio.paused,false);assert.equal(app.mediaSession.playbackState,'playing');assert.equal(app.state.queue.current,'a');
+      assert.equal(audio.currentTime,0);assert.equal(app.positions.at(-1).duration,audio.duration);assert.equal(app.state.tracks.get('a').duration,audio.duration);
+    }
+    assert.equal(app.nativeAudios.length,2,'restarts reuse a bounded pair of native players');
+  }
+});
+test('iOS skips before completion keep the existing player and inactive events cannot control a restarted queue',async t=>{
+  const app=await mediaFixture(t,{isIOS:true,stallFreshLoadsWhenHidden:true}),audio=app.audio,original=app.element('#audio');
+  app.state.queue.index=2;await app.playback.loadTrack('c',true);await settlePlayback();app.setHidden(true);
+  await app.mediaActions.nexttrack();assert.equal(original.src,audio.src);assert.equal(original.paused,false);
+  app.state.queue.index=2;await app.playback.loadTrack('c',true);await settlePlayback();
+  audio.currentTime=audio.duration;audio.ended=true;audio.paused=true;audio.emit('ended');await app.mediaActions.play();
+  assert.notEqual(original.src,audio.src);const source=audio.src;
+  original.emit('pause');original.emit('ended');original.emit('error');original.emit('loadedmetadata');
+  assert.equal(app.state.queue.current,'a');assert.equal(audio.src,source);assert.equal(audio.paused,false);assert.equal(app.mediaSession.metadata.title,'Song a');
+  app.mediaActions.pause();assert.equal(audio.paused,true);assert.equal(app.mediaSession.playbackState,'paused');
+  await app.mediaActions.play();assert.equal(audio.paused,false);assert.equal(audio.src,source);
 });
 test('single-song manual restarts reuse an actively playing native source',async t=>{
   const app=await mediaFixture(t),audio=app.element('#audio');app.state.queue.source=['a'];app.state.queue.order=['a'];
@@ -390,8 +418,10 @@ test('missing or partially unsupported Media Session leaves playback and other h
 });
 async function harness(t,db=memoryStore(),mediaOptions={}){
   const elements=new Map(),events={},timers=new Set(),waveCanvases=[],outputControls=[new Element()];
-  const element=s=>{if(!elements.has(s)){const el=s==='#audio'?new FakeAudio():new Element();if(s==='#audio'){if(mediaOptions.sinkId!==undefined)el.sinkId=mediaOptions.sinkId;el.nativeOutput=mediaOptions.nativeOutput;}if(['#queuePanel','#toast','#importBanner'].includes(s))el.hidden=true;elements.set(s,el);}return elements.get(s);};
-  const document={querySelector:element,querySelectorAll:selector=>selector==='.audio-wave'?waveCanvases:selector==='.output-control'?outputControls:[],addEventListener:(name,f)=>{(events['doc:'+name]||=[]).push(f);},createElement:()=>new Element(),body:Object.assign(new Element(),{append(){}}),hidden:false};
+  const nativeAudios=[];
+  const makeAudio=()=>{const el=new FakeAudio();if(nativeAudios.length&&mediaOptions.standbyDuration)el.nextDuration=mediaOptions.standbyDuration;nativeAudios.push(el);el.blockFreshLoad=()=>mediaOptions.stallFreshLoadsWhenHidden&&document.hidden&&!nativeAudios.some(a=>!a.paused&&!a.ended);return el;};
+  const element=s=>{if(!elements.has(s)){const el=s==='#audio'?makeAudio():new Element();if(s==='#audio'){if(mediaOptions.sinkId!==undefined)el.sinkId=mediaOptions.sinkId;el.nativeOutput=mediaOptions.nativeOutput;}if(['#queuePanel','#toast','#importBanner'].includes(s))el.hidden=true;elements.set(s,el);}return elements.get(s);};
+  const document={querySelector:element,querySelectorAll:selector=>selector==='.audio-wave'?waveCanvases:selector==='.output-control'?outputControls:[],addEventListener:(name,f)=>{(events['doc:'+name]||=[]).push(f);},createElement:tag=>tag==='audio'?makeAudio():new Element(),body:Object.assign(new Element(),{append(){}}),hidden:false};
   const window={addEventListener:(name,f)=>{events[name]=f;},scrollTo(){}};
   let hash='#library';const location={href:'https://squidify.example/',get hash(){return hash;},set hash(v){hash=v;queueMicrotask(()=>events.hashchange?.());}};
   const actions={},registrations=[],positions=[];
@@ -418,7 +448,7 @@ async function harness(t,db=memoryStore(),mediaOptions={}){
   await entry.evaluate();await entry.namespace.ready;
   const {context:app,actions:appActions}=entry.namespace;
   t.after(()=>{for(const timer of timers)clearTimeout(timer);});
-  return {setHidden:value=>{document.hidden=value;},outputControls,waveCanvases,enhancements:app.enhancements,ui:app.ui,offline:app.offline,state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,saveTrackDetails:app.playlists.saveTrackDetails,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,mediaSession,registrations,positions,playback:app.playback,emitDocument:(name,event)=>events['doc:'+name]?.forEach(fn=>fn(event)),emitWindow:name=>events[name]?.()};
+  return {audio:app.audio,nativeAudios,setHidden:value=>{document.hidden=value;},outputControls,waveCanvases,enhancements:app.enhancements,ui:app.ui,offline:app.offline,state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,saveTrackDetails:app.playlists.saveTrackDetails,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,mediaSession,registrations,positions,playback:app.playback,emitDocument:(name,event)=>events['doc:'+name]?.forEach(fn=>fn(event)),emitWindow:name=>events[name]?.()};
 }
 test('empty library starts with working folder and file input alternatives',async t=>{
   const app=await harness(t);assert.match(app.element('#main').innerHTML,/Your music belongs here/);
@@ -548,16 +578,16 @@ test('installed-update toast is shown once, only for the running ready release',
   await app.offline.announceInstalled('squidify-shell-v5',true);
   assert.equal(app.element('#toast').hidden,true);
   assert.equal(app.db.stores.settings.has('installedShellVersion'),false);
-  await Promise.all([app.offline.announceInstalled('squidify-shell-v23',true),app.offline.announceInstalled('squidify-shell-v23',true)]);
+  await Promise.all([app.offline.announceInstalled('squidify-shell-v24',true),app.offline.announceInstalled('squidify-shell-v24',true)]);
   assert.match(app.element('#toast').textContent,/Squidify updated/);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v23');
-  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v23',true);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v24');
+  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v24',true);
   assert.equal(reopened.element('#toast').hidden,true);
 });
 test('a first install records its release without claiming an update',async t=>{
-  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v23',false);
+  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v24',false);
   assert.equal(app.element('#toast').hidden,true);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v23');
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v24');
 });
 
 
