@@ -1,3 +1,4 @@
+import { BAND_COUNT, spectrumAt, followLevel } from './spectrum.js';
 import { icon } from './icons.js';
 import * as db from './storage.js';
 import { escapeHTML as esc } from './core.js';
@@ -95,9 +96,12 @@ export function createEnhancements(context) {
     try{
       const item=await db.get('media',id);if(generation!==waveGeneration||!item?.blob)return;
       const decoder=new Offline(1,1,8000),buffer=await decoder.decodeAudioData(await item.blob.arrayBuffer());
-      if(generation!==waveGeneration)return;
-      const channel=buffer.getChannelData(0),count=Math.min(90000,Math.ceil(buffer.duration*60)),result=new Float32Array(count),step=Math.max(1,Math.floor(channel.length/count));
-      for(let i=0;i<count;i++){let sum=0,n=0;for(let j=i*step;j<Math.min(channel.length,(i+1)*step);j+=4){sum+=channel[j]*channel[j];n++;}result[i]=Math.min(1,Math.sqrt(sum/Math.max(1,n))*4);}
+      if(generation!==waveGeneration||buffer.duration>900)return;
+      const channel=buffer.getChannelData(0),count=Math.ceil(buffer.duration*30),result=new Float32Array(count*BAND_COUNT);
+      for(let i=0;i<count;i++){
+        result.set(spectrumAt(channel,i/30*buffer.sampleRate,buffer.sampleRate),i*BAND_COUNT);
+        if(i%256===0){await new Promise(resolve=>setTimeout(resolve,0));if(generation!==waveGeneration)return;}
+      }
       samples=result;sampleDuration=buffer.duration;drawWave();
     }catch{/* Decoding support can differ from playback. Keep a quiet baseline. */}
   }
@@ -109,16 +113,17 @@ export function createEnhancements(context) {
     let settling=false;
     $$('.audio-wave').forEach(canvas=>{
       const ctx=canvas.getContext('2d');if(!ctx)return;
-      const rect=canvas.getBoundingClientRect(),ratio=Math.min(2,window.devicePixelRatio||1),w=Math.max(1,rect.width),h=Math.max(1,rect.height);
+      const rect=canvas.getBoundingClientRect(),ratio=Math.min(2,window.devicePixelRatio||1),w=rect.width,h=rect.height;
+      if(w<2||h<2){ctx.clearRect(0,0,canvas.width,canvas.height);return;}
       if(canvas.width!==Math.round(w*ratio)||canvas.height!==Math.round(h*ratio)){canvas.width=Math.round(w*ratio);canvas.height=Math.round(h*ratio);}
       ctx.setTransform(ratio,0,0,ratio,0,0);ctx.clearRect(0,0,w,h);
-      canvas.setAttribute('aria-label',samples?'Audio waveform':'Audio waveform unavailable for this file');
-      let levels=envelopes.get(canvas);if(!levels){levels=Array(19).fill(0);envelopes.set(canvas,levels);}
+      canvas.setAttribute('aria-label',samples?'Audio equalizer':'Equalizer unavailable for this file');
+      let levels=envelopes.get(canvas);if(!levels){levels=Array(BAND_COUNT+2).fill(0);envelopes.set(canvas,levels);}
       const points=levels.map((level,i)=>{
-        const at=Math.floor((audio.currentTime+(i/18-.5)*1.8)/Math.max(1,sampleDuration)*(samples?.length||0));
-        const target=playing&&samples&&!reduced?(samples[Math.max(0,Math.min(samples.length-1,at))]||0)*Math.sin(Math.PI*i/18):0;
-        levels[i]=level+(target-level)*.12;if(levels[i]>.002)settling=true;
-        return {x:i/18*w,y:h-3-levels[i]*(h-12)};
+        const at=Math.min(Math.max(0,Math.floor(audio.currentTime*30)),Math.max(0,(samples?.length||0)/BAND_COUNT-1));
+        const target=playing&&samples&&!reduced&&i>0&&i<=BAND_COUNT?(samples[at*BAND_COUNT+i-1]||0):0;
+        levels[i]=followLevel(level,target);if(levels[i]>.002)settling=true;else levels[i]=0;
+        return {x:i/(BAND_COUNT+1)*w,y:h-3-levels[i]*(h-12)};
       });
       const gradient=ctx.createLinearGradient(0,0,w,0);gradient.addColorStop(0,'#0eedb5');gradient.addColorStop(.5,'#63a4ef');gradient.addColorStop(1,'#ae00ff');
       const curve=()=>{ctx.beginPath();ctx.moveTo(points[0].x,points[0].y);for(let i=0;i<points.length-1;i++){const a=points[i],b=points[i+1],mid=(a.x+b.x)/2;ctx.bezierCurveTo(mid,a.y,mid,b.y,b.x,b.y);}};
@@ -127,6 +132,7 @@ export function createEnhancements(context) {
     });
     if((playing||settling) && typeof requestAnimationFrame==='function' && !reduced)frame=requestAnimationFrame(drawWave);
   }
+  window.addEventListener('resize',drawWave);
   audio.addEventListener('play',drawWave);audio.addEventListener('pause',drawWave);audio.addEventListener('timeupdate',()=>{if(!frame)drawWave();});document.addEventListener('visibilitychange',drawWave);
   function importResults(){const report=state.importReport;if(!report)return;context.ui.setModal(context.ui.modalHead('Import results')+`<p>${esc(report.summary)}</p><ul class="import-results">${report.files.map(f=>`<li><strong>${esc(f.name)}</strong><span>${esc(f.reason)}</span></li>`).join('')}</ul>`);}
   return {coverDialog,chooseCover,saveCover,playlistMediaArt,chooseOutput,renderOutput,drawWave,loadWave,importResults};

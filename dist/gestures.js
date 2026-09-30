@@ -1,3 +1,4 @@
+import { icon } from './icons.js';
 // Pointer gestures keep vertical list scrolling native. Only a completed gesture
 // consumes its following click; range inputs retain their normal drag behavior.
 export function bindGestures({ document, window, run, openMenu, nowDialog, beginPlayerDrag }) {
@@ -9,6 +10,7 @@ export function bindGestures({ document, window, run, openMenu, nowDialog, begin
       const offset=active.surface.style.transform;
       if(!preserve){active.surface.style.removeProperty('transform');if(active.kind==='full')active.surface.style.setProperty('--player-dim','1');if(offset&&active.surface.animate&&!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)active.surface.animate([{transform:offset},{transform:'translate3d(0,0,0)'}],{duration:380,easing:'cubic-bezier(.22,1.2,.36,1)'});}
       active.surface.classList.remove('gesture-active', 'queue-ready');
+      if(active.underlay){const layer=active.underlay;setTimeout(()=>layer.remove(),380);}
     }
     active = null;
   };
@@ -52,11 +54,15 @@ export function bindGestures({ document, window, run, openMenu, nowDialog, begin
     g.surface.setPointerCapture?.(event.pointerId);
     g.surface.classList.add('gesture-active');
     const amount = g.axis === 'x' ? g.dx : g.dy;
-    const offset = g.kind==='full'&&g.axis==='y'&&amount>0 ? amount*.85 : Math.max(-70, Math.min(70, amount * 0.55));
+    const offset = g.kind==='full'&&g.axis==='y'&&amount>0 ? amount*.85 : g.item?.dataset.trackRow&&g.axis==='x'&&amount>0 ? Math.min(150,amount*.95) : Math.max(-70, Math.min(70, amount * 0.55));
     const y=g.axis==='y'?offset+g.startY:0;
     g.surface.style.setProperty('transform', g.axis === 'x' ? `translate3d(${offset}px,0,0)` : `translate3d(0,${y}px,0)`);
     if(g.kind==='full'&&g.axis==='y')g.surface.style.setProperty('--player-dim',String(Math.max(0,1-Math.max(0,y)/(window.innerHeight||800))));
     g.surface.classList.toggle('queue-ready', !!g.item && g.dx >= 64);
+    if(g.item?.dataset.trackRow && g.axis==='x' && g.dx>0){
+      if(!g.underlay && document.createElement){const host=g.item.closest('.track-list');if(host){const r=g.item.getBoundingClientRect(),h=host.getBoundingClientRect();const layer=document.createElement('div');layer.className='queue-underlay';layer.setAttribute('aria-hidden','true');layer.innerHTML=icon('queue')+'<span>Add to queue</span>';layer.style.top=`${r.top-h.top}px`;layer.style.height=`${r.height}px`;host.prepend(layer);g.underlay=layer;}}
+      if(g.underlay){g.underlay.classList.toggle('ready',g.dx>=64);g.underlay.querySelector('span').textContent=g.dx>=64?'Release to queue':'Add to queue';}
+    }
   }, { passive: false });
   document.addEventListener('pointerup', event => {
     const g = active;

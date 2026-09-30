@@ -54,11 +54,12 @@ export function createPlayback(context) {
     }catch(e){if(generation!==playGeneration)return;priming=false;playIntent=false;audio.pause();toast(e.message||'Could not load this song. Import it again.',true);}
     renderPlayer();
   }
+  function isCurrentView(){return !!state.queue.current && (state.queue.viewKey===ui.viewKey() || (!state.queue.viewKey && state.queue.context===contextName() && currentList().some(t=>t.id===state.queue.current)));}
   function startView(startId=null,shuffle=false) {
     const list=currentList();if(!list.length)return addMusicDialog();
     if(shuffle)state.queue.shuffle=true;
     const id=startId || (state.queue.shuffle?list[Math.floor(Math.random()*list.length)].id:list[0].id);
-    state.queue.start(list.map(t=>t.id),id,state.tracks,contextName());state.queue.playlistId=state.view==='playlist'?state.detail:null;loadTrack(id,true);
+    state.queue.start(list.map(t=>t.id),id,state.tracks,contextName());state.queue.playlistId=state.view==='playlist'?state.detail:null;state.queue.viewKey=ui.viewKey();loadTrack(id,true);
   }
   async function togglePlay() {
     if(!state.tracks.size)return addMusicDialog();
@@ -123,7 +124,7 @@ export function createPlayback(context) {
 
   const actions = {
   'play-track':b=>{if(state.queue.current===b.dataset.id)togglePlay();else startView(b.dataset.id);},
-  'play-view':()=>startView(),
+  'play-view':()=>isCurrentView()?togglePlay():startView(),
   'shuffle-view':()=>startView(null,true),
   'toggle-play':()=>togglePlay(),
   'previous':()=>previousTrack(),
@@ -140,5 +141,5 @@ export function createPlayback(context) {
   'remove-track':async b=>{const id=b.dataset.id;await db.deleteTrack(id);if(id===activeId){playGeneration++;playIntent=false;audio.pause();audio.removeAttribute('src');audio.load();activeId=null;}state.tracks.delete(id);state.playlists.forEach(p=>{p.trackIds=p.trackIds.filter(x=>x!==id);});state.queue.prune(new Set(state.tracks.keys()));if(mediaURLs.has(id)){URL.revokeObjectURL(mediaURLs.get(id));mediaURLs.delete(id);}ui.releaseArtwork(id);modal.close();render();saveSession();toast('Song removed from this device.');}
   };
 
-  return { loadTrack, togglePlay, nextTrack, previousTrack, toggleShuffle, updatePositionState, updateMediaSession, saveSession, activeTrackId, isPriming, setupMediaSession, bindEvents, actions };
+  return { isCurrentView, loadTrack, togglePlay, nextTrack, previousTrack, toggleShuffle, updatePositionState, updateMediaSession, saveSession, activeTrackId, isPriming, setupMediaSession, bindEvents, actions };
 }

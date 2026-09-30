@@ -29,9 +29,9 @@ class FakeAudio extends Element {
   async play(){this.paused=false;this.emit('play');}pause(){const old=this.paused;this.paused=true;if(!old)this.emit('pause');}load(){this.currentTime=0;if(this.src){this.emit('loadedmetadata');this.onloadedmetadata?.();}}
 }
 async function harness(t,db=memoryStore()){
-  const elements=new Map(),events={},timers=new Set();
+  const elements=new Map(),events={},timers=new Set(),waveCanvases=[];
   const element=s=>{if(!elements.has(s)){const el=s==='#audio'?new FakeAudio():new Element();if(['#queuePanel','#toast','#importBanner'].includes(s))el.hidden=true;elements.set(s,el);}return elements.get(s);};
-  const document={querySelector:element,querySelectorAll:()=>[],addEventListener:(name,f)=>{(events['doc:'+name]||=[]).push(f);},createElement:()=>new Element(),body:Object.assign(new Element(),{append(){}}),hidden:false};
+  const document={querySelector:element,querySelectorAll:selector=>selector==='.audio-wave'?waveCanvases:[],addEventListener:(name,f)=>{(events['doc:'+name]||=[]).push(f);},createElement:()=>new Element(),body:Object.assign(new Element(),{append(){}}),hidden:false};
   const window={addEventListener:(name,f)=>{events[name]=f;},scrollTo(){}};
   let hash='#library';const location={href:'https://squidify.example/',get hash(){return hash;},set hash(v){hash=v;queueMicrotask(()=>events.hashchange?.());}};
   const actions={};const navigator={userAgent:'Test',platform:'Test',maxTouchPoints:0,onLine:true,storage:{persist:async()=>true},mediaSession:{setActionHandler:(name,f)=>actions[name]=f,setPositionState(){}}};
@@ -50,7 +50,7 @@ async function harness(t,db=memoryStore()){
   await entry.evaluate();await entry.namespace.ready;
   const {context:app,actions:appActions}=entry.namespace;
   t.after(()=>{for(const timer of timers)clearTimeout(timer);});
-  return {enhancements:app.enhancements,ui:app.ui,offline:app.offline,state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,saveTrackDetails:app.playlists.saveTrackDetails,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,emitDocument:(name,event)=>events['doc:'+name]?.forEach(fn=>fn(event))};
+  return {waveCanvases,enhancements:app.enhancements,ui:app.ui,offline:app.offline,state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,saveTrackDetails:app.playlists.saveTrackDetails,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,emitDocument:(name,event)=>events['doc:'+name]?.forEach(fn=>fn(event))};
 }
 test('empty library starts with working folder and file input alternatives',async t=>{
   const app=await harness(t);assert.match(app.element('#main').innerHTML,/Your music belongs here/);
@@ -145,16 +145,16 @@ test('installed-update toast is shown once, only for the running ready release',
   await app.offline.announceInstalled('squidify-shell-v5',true);
   assert.equal(app.element('#toast').hidden,true);
   assert.equal(app.db.stores.settings.has('installedShellVersion'),false);
-  await Promise.all([app.offline.announceInstalled('squidify-shell-v10',true),app.offline.announceInstalled('squidify-shell-v10',true)]);
+  await Promise.all([app.offline.announceInstalled('squidify-shell-v11',true),app.offline.announceInstalled('squidify-shell-v11',true)]);
   assert.match(app.element('#toast').textContent,/Squidify updated/);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v10');
-  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v10',true);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v11');
+  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v11',true);
   assert.equal(reopened.element('#toast').hidden,true);
 });
 test('a first install records its release without claiming an update',async t=>{
-  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v10',false);
+  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v11',false);
   assert.equal(app.element('#toast').hidden,true);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v10');
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v11');
 });
 
 
@@ -194,4 +194,23 @@ test('Create Playlist click does not inherit navigation from body data-view; sub
  await new Promise(resolve=>setTimeout(resolve,10));
  assert.equal(prevented,true);assert.equal(app.state.playlists.length,1);assert.equal(app.state.playlists[0].name,'Created by form');assert.equal(app.element('#modal').open,false);
  const again=await harness(t,app.db);assert.equal(again.state.playlists[0].name,'Created by form');
+});
+
+test('collection play toggles pause and resume without rebuilding or restarting the queue',async t=>{
+ const app=await harness(t);await app.importEntries([{file:musicFile('One')},{file:musicFile('Two')}]);
+ await app.actions['play-view']();await new Promise(r=>setTimeout(r,10));
+ const audio=app.element('#audio'),id=app.state.queue.current,order=[...app.state.queue.order];audio.currentTime=32;
+ await app.actions['play-view']();assert.equal(audio.paused,true);assert.equal(audio.currentTime,32);
+ await app.actions['play-view']();assert.equal(audio.paused,false);assert.equal(audio.currentTime,32);assert.equal(app.state.queue.current,id);assert.deepEqual([...app.state.queue.order],order);
+ app.element('#playlistName').value='Another collection';await app.savePlaylistForm({dataset:{track:order[1]}});await new Promise(r=>setTimeout(r,10));
+ await app.actions['play-view']();await new Promise(r=>setTimeout(r,10));assert.equal(app.state.queue.current,order[1]);assert.equal(app.state.queue.playlistId,app.state.playlists[0].id);
+});
+
+test('paused hidden-player canvas remains transparent and redraws as a baseline on reopening',async t=>{
+ const app=await harness(t);let width=0,height=0,clears=0,curves=[];
+ const ctx={clearRect(){clears++;},setTransform(){},createLinearGradient(){return{addColorStop(){}};},beginPath(){},moveTo(x,y){curves.push(y);},bezierCurveTo(x1,y1,x2,y2,x3,y3){curves.push(y1,y2,y3);},lineTo(){},closePath(){},fill(){},stroke(){}};
+ const canvas={width:780,height:140,getContext:()=>ctx,getBoundingClientRect:()=>({width,height}),setAttribute(){}};app.waveCanvases.push(canvas);
+ app.enhancements.drawWave();assert.equal(canvas.height,140,'hidden canvas must not become a one-pixel filled image');assert.equal(curves.length,0);assert.ok(clears>0);
+ width=390;height=85;app.enhancements.drawWave();assert.equal(canvas.height,85);assert.ok(curves.length>0);assert.ok(curves.every(y=>y===82),'paused wave stays within three pixels of bottom');
+ width=0;height=0;curves=[];app.enhancements.drawWave();assert.equal(curves.length,0);width=390;height=85;app.enhancements.drawWave();assert.ok(curves.every(y=>y===82));
 });
