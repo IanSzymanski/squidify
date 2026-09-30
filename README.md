@@ -203,3 +203,22 @@ Verification: 72 automated tests passed, including synchronous native-action
 startup, retained session, delayed and stale metadata, pause while loading, and
 update completion/failure. The audio harness models source reset, readyState,
 currentSrc and delayed metadata. Physical iPhone locked playback remains pending.
+
+## Shell v20 — user validation and manual playlist restart
+
+The user confirmed phone and headphone playback after v19. Device/version and
+full Safari/Home Screen acceptance details were not supplied. Automatic Bluetooth
+icon switching on that phone remains unavailable: the Safari wireless-target API
+exposes AirPlay, rather than a general Bluetooth output route.
+
+Manual Next now starts a new playlist/queue pass at the end, independent of
+Repeat. Shuffle produces another balanced pass; natural completion with Repeat
+off still stops. The shared engine preserves playlist context for app, gesture,
+lock-screen and headphone commands. Output detection now refreshes on startup,
+playback, focus, visibility and device/sink changes, and can recognize a named
+system default where the browser exposes it. Merely available headphones are
+never treated as the active route; no new permissions are requested.
+
+Verification: 75 automated tests passed, including manual restart after natural
+completion, repeat/shuffle/single/empty queues, retained metadata/context, and
+active output/default-sink icon refresh with unsupported-browser fallback.

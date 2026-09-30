@@ -63,7 +63,8 @@ export class PlayQueue {
   next(tracks, manual = false) {
     if (!manual && this.repeat === 'one' && this.current) return this.current;
     if (this.index + 1 < this.order.length) return this.order[++this.index];
-    if (this.repeat === 'all' && this.source.length) {
+    // A deliberate Next starts another pass even when automatic repeat is off.
+    if ((manual || this.repeat === 'all') && this.source.length) {
       const previous = this.order.slice(-2);
       this.order = this.shuffle ? balancedShuffle(this.source, tracks, previous) : [...this.source];
       this.index = 0;

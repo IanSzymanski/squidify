@@ -33,6 +33,17 @@ test('repeat one applies to natural endings, while manual next advances',()=>{
   queue.repeat='off';assert.equal(queue.next(map),null);
   queue.repeat='all';assert.equal(queue.next(map),'0');
 });
+test('manual Next starts a full new pass at the end for every repeat mode, including shuffle and single-song queues',()=>{
+  for(const repeat of ['off','one','all'])for(const shuffle of [false,true]) {
+    const queue=new PlayQueue({repeat,shuffle});queue.start(['0','1','2'],'0',map);queue.index=queue.order.length-1;
+    assert.ok(queue.next(map,true));assert.equal(queue.index,0);assert.equal(queue.repeat,repeat);
+    const played=[queue.current,queue.next(map,true),queue.next(map,true)];
+    assert.deepEqual([...played].sort(),['0','1','2']);
+    queue.repeat='off';assert.equal(queue.next(map,false),null,'natural completion still stops with repeat off');
+  }
+  const single=new PlayQueue();single.start(['0'],'0',map);assert.equal(single.next(map,true),'0');
+  const empty=new PlayQueue();assert.equal(empty.next(map,true),null);
+});
 test('play next moves a queued song without duplicating it; queue survives serialization',()=>{
   const queue=new PlayQueue();queue.start(['0','1','2','3'],'0',map);queue.add('3',true);
   assert.deepEqual(queue.order,['0','3','1','2']);queue.next(map);

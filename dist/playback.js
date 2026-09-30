@@ -36,7 +36,7 @@ export function createPlayback(context) {
   }
   function prepareNeighbors() {
     const q=state.queue;
-    const ids=[q.order[q.index-1],q.order[q.index+1],q.repeat==='all'?q.order[0]:null];
+    const ids=[q.order[q.index-1],q.order[q.index+1],q.source[0]];
     for(const id of new Set(ids))if(id&&byId(id))mediaURL(id).catch(()=>{});
   }
   function primeAudio() {

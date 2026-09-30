@@ -133,8 +133,34 @@ test('external Next matches in-app Next for inserted queue items, shuffle, repea
       assert.equal(remote.element('#audio').paused,button.element('#audio').paused);
       assert.equal(remote.mediaSession.metadata.title,`Song ${remote.state.queue.current}`);
     }
-    assert.equal(remote.mediaSession.playbackState,repeat==='all'?'playing':'paused');
+    assert.equal(remote.mediaSession.playbackState,'playing');
   }
+});
+test('Next restarts a completed playlist through both app and headphone actions with playback, metadata and context intact',async t=>{
+  for(const external of [false,true]) {
+    const app=await mediaFixture(t),audio=app.element('#audio');
+    app.state.queue.playlistId='playlist-test';app.state.queue.context='Test playlist';
+    app.state.queue.index=2;await app.playback.loadTrack('c',true);await settlePlayback();
+    audio.currentTime=120;audio.ended=true;audio.paused=true;audio.emit('ended');await settlePlayback();
+    assert.equal(app.state.queue.current,'c');assert.equal(audio.paused,true);assert.equal(app.mediaSession.playbackState,'paused');
+    await (external?app.mediaActions.nexttrack():app.actions.next());
+    assert.equal(app.state.queue.current,'a');assert.equal(audio.paused,false);assert.equal(audio.currentTime,0);
+    assert.equal(app.mediaSession.metadata.title,'Song a');assert.equal(app.positions.at(-1).position,0);
+    assert.equal(app.state.queue.playlistId,'playlist-test');assert.equal(app.state.queue.context,'Test playlist');assert.equal(app.state.queue.repeat,'off');
+  }
+});
+test('output icon follows the exposed active sink and named system default, never a merely available headset',async t=>{
+  let outputs=[{kind:'audiooutput',deviceId:'default',label:'Default - Speakers'},{kind:'audiooutput',deviceId:'buds',label:'AirPods Pro'},{kind:'audiooutput',deviceId:'speaker',label:'Speakers'}],changed,calls=0;
+  const mediaDevices={enumerateDevices:async()=>{calls++;return outputs;},addEventListener:(name,f)=>{if(name==='devicechange')changed=f;}};
+  const app=await mediaFixture(t,{sinkId:'',mediaDevices}),audio=app.element('#audio'),button=app.outputControls[0];await settlePlayback();
+  assert.equal(button.classList.contains('active'),true);assert.match(button.attrs['aria-label'],/Speakers/);assert.doesNotMatch(button.innerHTML,/headphone/i);
+  outputs=outputs.map(d=>d.deviceId==='default'?{...d,label:'Default - AirPods Pro'}:d);await changed();
+  assert.match(button.attrs['aria-label'],/AirPods/);assert.match(button.innerHTML,/M3 14v-3/,'headphone icon is selected');
+  audio.sinkId='speaker';audio.emit('sinkchange');await settlePlayback();assert.equal(button.attrs['aria-label'],'Speakers');
+  audio.sinkId='missing';audio.emit('sinkchange');await settlePlayback();assert.equal(button.classList.contains('active'),false);
+  const before=calls,unsupported=await mediaFixture(t,{mediaDevices});await unsupported.mediaActions.play();await settlePlayback();
+  assert.equal(calls,before,'an unsupported browser never probes device listings or requests permissions');
+  assert.equal(unsupported.outputControls[0].classList.contains('active'),false);
 });
 
 test('external Previous restarts after three seconds then follows the actual played order',async t=>{
@@ -212,15 +238,16 @@ test('missing or partially unsupported Media Session leaves playback and other h
   partial.mediaActions.pause();assert.equal(partial.element('#audio').paused,true);
 });
 async function harness(t,db=memoryStore(),mediaOptions={}){
-  const elements=new Map(),events={},timers=new Set(),waveCanvases=[];
-  const element=s=>{if(!elements.has(s)){const el=s==='#audio'?new FakeAudio():new Element();if(['#queuePanel','#toast','#importBanner'].includes(s))el.hidden=true;elements.set(s,el);}return elements.get(s);};
-  const document={querySelector:element,querySelectorAll:selector=>selector==='.audio-wave'?waveCanvases:[],addEventListener:(name,f)=>{(events['doc:'+name]||=[]).push(f);},createElement:()=>new Element(),body:Object.assign(new Element(),{append(){}}),hidden:false};
+  const elements=new Map(),events={},timers=new Set(),waveCanvases=[],outputControls=[new Element()];
+  const element=s=>{if(!elements.has(s)){const el=s==='#audio'?new FakeAudio():new Element();if(s==='#audio'&&mediaOptions.sinkId!==undefined)el.sinkId=mediaOptions.sinkId;if(['#queuePanel','#toast','#importBanner'].includes(s))el.hidden=true;elements.set(s,el);}return elements.get(s);};
+  const document={querySelector:element,querySelectorAll:selector=>selector==='.audio-wave'?waveCanvases:selector==='.output-control'?outputControls:[],addEventListener:(name,f)=>{(events['doc:'+name]||=[]).push(f);},createElement:()=>new Element(),body:Object.assign(new Element(),{append(){}}),hidden:false};
   const window={addEventListener:(name,f)=>{events[name]=f;},scrollTo(){}};
   let hash='#library';const location={href:'https://squidify.example/',get hash(){return hash;},set hash(v){hash=v;queueMicrotask(()=>events.hashchange?.());}};
   const actions={},registrations=[],positions=[];
   const mediaSession={setActionHandler:(name,f)=>{registrations.push(name);if(mediaOptions.unsupported?.includes(name))throw new Error('Unsupported action');actions[name]=f;},setPositionState:value=>{if(mediaOptions.positionThrows)throw new Error('Unsupported position');positions.push(value);}};
   const navigator={userAgent:'Test',platform:'Test',maxTouchPoints:0,onLine:true,storage:{persist:async()=>true},mediaSession:mediaOptions.absent?undefined:mediaSession};
   if(mediaOptions.serviceWorker)navigator.serviceWorker=mediaOptions.serviceWorker;
+  if(mediaOptions.mediaDevices)navigator.mediaDevices=mediaOptions.mediaDevices;
   if(mediaOptions.stateThrows)Object.defineProperty(mediaSession,'playbackState',{set(){throw new Error('Unsupported state');}});
   const context=vm.createContext({document,window,navigator,location,URL,Blob,File,TextEncoder,DataView,Uint8Array,ArrayBuffer,crypto:{subtle:webcrypto.subtle,randomUUID},Audio:FakeAudio,MediaMetadata:class{constructor(value){Object.assign(this,value);}},AbortController,FormData,matchMedia:()=>({matches:false}),console:{error(){}},setTimeout:(f,ms)=>{const timer=setTimeout(f,ms);timers.add(timer);return timer;},clearTimeout:id=>{clearTimeout(id);timers.delete(id);}});
   if(mediaOptions.random)context.Math=Object.assign(Object.create(Math),{random:mediaOptions.random});
@@ -238,7 +265,7 @@ async function harness(t,db=memoryStore(),mediaOptions={}){
   await entry.evaluate();await entry.namespace.ready;
   const {context:app,actions:appActions}=entry.namespace;
   t.after(()=>{for(const timer of timers)clearTimeout(timer);});
-  return {waveCanvases,enhancements:app.enhancements,ui:app.ui,offline:app.offline,state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,saveTrackDetails:app.playlists.saveTrackDetails,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,mediaSession,registrations,positions,playback:app.playback,emitDocument:(name,event)=>events['doc:'+name]?.forEach(fn=>fn(event))};
+  return {outputControls,waveCanvases,enhancements:app.enhancements,ui:app.ui,offline:app.offline,state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,saveTrackDetails:app.playlists.saveTrackDetails,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,mediaSession,registrations,positions,playback:app.playback,emitDocument:(name,event)=>events['doc:'+name]?.forEach(fn=>fn(event))};
 }
 test('empty library starts with working folder and file input alternatives',async t=>{
   const app=await harness(t);assert.match(app.element('#main').innerHTML,/Your music belongs here/);
@@ -368,16 +395,16 @@ test('installed-update toast is shown once, only for the running ready release',
   await app.offline.announceInstalled('squidify-shell-v5',true);
   assert.equal(app.element('#toast').hidden,true);
   assert.equal(app.db.stores.settings.has('installedShellVersion'),false);
-  await Promise.all([app.offline.announceInstalled('squidify-shell-v19',true),app.offline.announceInstalled('squidify-shell-v19',true)]);
+  await Promise.all([app.offline.announceInstalled('squidify-shell-v20',true),app.offline.announceInstalled('squidify-shell-v20',true)]);
   assert.match(app.element('#toast').textContent,/Squidify updated/);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v19');
-  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v19',true);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v20');
+  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v20',true);
   assert.equal(reopened.element('#toast').hidden,true);
 });
 test('a first install records its release without claiming an update',async t=>{
-  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v19',false);
+  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v20',false);
   assert.equal(app.element('#toast').hidden,true);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v19');
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v20');
 });
 
 

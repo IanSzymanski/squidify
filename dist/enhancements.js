@@ -88,7 +88,7 @@ export function createEnhancements(context) {
     }
     return {src:mediaArt.get(p.id),type:'image/png'};
   }
-  let selectedOutput=null;
+  let selectedOutput=null,outputRevision=0;
   const isHeadphones=label=>/headphones?|headsets?|earphones?|earbuds?|airpods|buds|WH-|WF-|QC[ -]?\d|QuietComfort/i.test(label||'');
   function renderOutput(){
     const headphones=isHeadphones(selectedOutput?.label),wireless=!!audio.webkitCurrentPlaybackTargetIsWireless;
@@ -96,17 +96,21 @@ export function createEnhancements(context) {
     $$('.output-control').forEach(b=>{b.innerHTML=icon(headphones?'headphones':'bluetooth');b.title=label;b.setAttribute('aria-label',label);b.classList.toggle('active',headphones||!!selectedOutput||wireless);});
   }
   async function refreshOutput(){
+    const revision=++outputRevision,sink=audio.sinkId;
     try{
-      if(!selectedOutput)return renderOutput();
+      // Inspect only the active sink (including a named system default), never
+      // infer that a listed/connected headset is the selected playback route.
+      if(typeof sink!=='string'||!navigator.mediaDevices?.enumerateDevices){selectedOutput=null;return renderOutput();}
       const devices=await navigator.mediaDevices?.enumerateDevices?.();
-      selectedOutput=devices?.find(d=>d.kind==='audiooutput' && d.deviceId===audio.sinkId)||null;
-    }catch{selectedOutput=null;}
+      if(revision!==outputRevision||audio.sinkId!==sink)return;
+      selectedOutput=devices?.find(d=>d.kind==='audiooutput' && d.deviceId===(sink||'default'))||null;
+    }catch{if(revision!==outputRevision)return;selectedOutput=null;}
     renderOutput();
   }
   async function chooseOutput(){
     try{
       if(navigator.mediaDevices?.selectAudioOutput && audio.setSinkId){
-        const device=await navigator.mediaDevices.selectAudioOutput();await audio.setSinkId(device.deviceId);selectedOutput=device;renderOutput();
+        const device=await navigator.mediaDevices.selectAudioOutput();await audio.setSinkId(device.deviceId);outputRevision++;selectedOutput=device;renderOutput();
         context.ui.toast(`Audio output: ${device.label||'selected device'}.`);
       }else if(audio.webkitShowPlaybackTargetPicker){audio.webkitShowPlaybackTargetPicker();}
       else context.ui.toast('Choose headphones or a speaker in your device’s audio controls. This browser does not report the active Bluetooth connection.');
@@ -115,6 +119,10 @@ export function createEnhancements(context) {
   navigator.mediaDevices?.addEventListener?.('devicechange',refreshOutput);
   audio.addEventListener('sinkchange',refreshOutput);
   audio.addEventListener('webkitcurrentplaybacktargetiswirelesschanged',renderOutput);
+  audio.addEventListener('play',refreshOutput);
+  window.addEventListener('focus',refreshOutput);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshOutput();});
+  refreshOutput();
   // Decode a bounded copy to sample its real waveform. Do not reroute the media
   // element through Web Audio: iOS background and lock-screen playback stay native.
   async function loadWave(id){
