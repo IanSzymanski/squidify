@@ -1,6 +1,30 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spectrumAt, followLevel, BAND_COUNT } from '../dist/spectrum.js';
+import { EQ_DEFAULTS, normalizeEqualizerSettings, equalizerPoints, equalizerTangents } from '../dist/spectrum.js';
+
+test('edge fade eases into the active area while preserving a level center and fixed outer line',()=>{
+ const points=equalizerPoints(Array(18).fill(1),390,70,84,306);
+ const heights=points.slice(2,-2).map(p=>67-p.y);
+ assert.ok(heights[0]<2&&heights[1]>heights[0]&&heights[2]>heights[1]);
+ assert.equal(Math.max(...heights),62);
+ assert.ok(Math.abs(heights[0]-heights.at(-1))<1e-9);
+ assert.equal(equalizerTangents(points)[1],0);
+ assert.ok(points.filter(p=>p.x<=84||p.x>=306).every(p=>p.y===67));
+ for(const zones of [3,24])for(const edgeFade of [0,50])for(const width of [0,2]){
+  const varied=equalizerPoints(Array.from({length:18},(_,i)=>i/17),390,70,84,306,{zones,edgeFade,width,contrast:5});
+  assert.ok(varied.every(p=>Number.isFinite(p.y)&&p.y>=5&&p.y<=67));
+  assert.ok(varied.filter(p=>p.x<=84||p.x>=306).every(p=>p.y===67));
+ }
+});
+test('saved equalizer values are sanitized and attack/release speed is independent of frame rate',()=>{
+ assert.deepEqual(normalizeEqualizerSettings(null),EQ_DEFAULTS);
+ const settings=normalizeEqualizerSettings({zones:999,edgeFade:-1,contrast:NaN,width:'bad'});
+ assert.equal(settings.zones,24);assert.equal(settings.edgeFade,0);assert.equal(settings.contrast,2.4);assert.equal(settings.width,.35);
+ const slow={...EQ_DEFAULTS,attack:5,release:5},fast={...EQ_DEFAULTS,attack:98,release:98};
+ assert.ok(followLevel(0,1,slow)<followLevel(0,1,fast));assert.ok(followLevel(1,0,slow)>followLevel(1,0,fast));
+ assert.ok(Math.abs(followLevel(followLevel(0,1,slow,1000/120),1,slow,1000/120)-followLevel(0,1,slow,1000/60))<1e-10);
+});
 test('equalizer hotspots separate low and high tones without temporal travel',()=>{
  const tone=f=>Float32Array.from({length:1024},(_,i)=>.7*Math.sin(2*Math.PI*f*i/8000));
  const low=spectrumAt(tone(125),512,8000),high=spectrumAt(tone(2500),512,8000);
@@ -14,7 +38,7 @@ test('sharp accents attack quickly while release remains smooth',()=>{
 
 test('connected curve joins twelve zone apices without artificial valleys',async()=>{
  const {equalizerPoints}=await import('../dist/spectrum.js');
- const points=equalizerPoints(Array(18).fill(1),300,70);
+ const points=equalizerPoints(Array(18).fill(1),300,70,0,300,{edgeFade:0});
  assert.equal(points.filter(p=>p.y===8-3).length,12);
  assert.equal(points.length,14,'only zone apices and baseline endpoints remain');
  assert.equal(points.filter(p=>p.y===67).length,2,'only the outer edges return to baseline');

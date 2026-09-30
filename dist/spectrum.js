@@ -12,12 +12,36 @@ export function spectrumAt(channel,center,sampleRate){
  }
  return levels;
 }
-export const followLevel=(current,target)=>current+(target-current)*(target>current?.92:.48);
+export const EQ_CONTROLS=[
+ {key:'zones',label:'Zones',min:3,max:24,step:1,value:12,unit:'',hint:'Number of frequency regions.'},
+ {key:'contrast',label:'Peak contrast',min:1,max:5,step:.1,value:2.4,unit:'×',hint:'Higher values make quieter zones recede.'},
+ {key:'sensitivity',label:'Sensitivity',min:.5,max:2,step:.05,value:1,unit:'×',hint:'Higher values reveal quieter sounds.'},
+ {key:'width',label:'Peak width',min:0,max:2,step:.05,value:.35,unit:'',hint:'Blend neighboring zones into broader peaks.'},
+ {key:'edgeFade',label:'Edge fade',min:0,max:50,step:1,value:30,unit:'%',hint:'How much of each edge eases into the stationary line.'},
+ {key:'attack',label:'Attack speed',min:5,max:98,step:1,value:92,unit:'%',hint:'How quickly peaks rise.'},
+ {key:'release',label:'Release speed',min:5,max:98,step:1,value:48,unit:'%',hint:'How quickly peaks fall.'},
+ {key:'height',label:'Peak height',min:10,max:100,step:1,value:100,unit:'%',hint:'Maximum height within the equalizer.'},
+ {key:'glow',label:'Glow softness',min:0,max:20,step:.5,value:9,unit:' px',hint:'Soft light around the contour.'},
+ {key:'fill',label:'Fill opacity',min:0,max:60,step:1,value:20,unit:'%',hint:'Color beneath the contour.'},
+ {key:'stroke',label:'Line thickness',min:.5,max:3,step:.1,value:1.7,unit:' px',hint:'Weight of the gradient line.'}
+];
+export const EQ_DEFAULTS=Object.freeze(Object.fromEntries(EQ_CONTROLS.map(c=>[c.key,c.value])));
+export function normalizeEqualizerSettings(raw={}){
+ return Object.fromEntries(EQ_CONTROLS.map(c=>{
+  const v=raw?.[c.key],n=typeof v==='number'&&Number.isFinite(v)?Math.max(c.min,Math.min(c.max,v)):c.value;
+  return [c.key,Number((Math.round(n/c.step)*c.step).toFixed(2))];
+ }));
+}
+export const followLevel=(current,target,settings=EQ_DEFAULTS,elapsed=1000/60)=>{
+ const speed=(target>current?settings.attack:settings.release)/100;
+ return current+(target-current)*(1-Math.pow(1-speed,Math.max(0,Math.min(100,elapsed))/(1000/60)));
+};
 
 // One apex per zone, joined directly: no synthetic shoulders or boundary dips.
 // Optional bounds keep the outer baseline still on the full-width player canvas.
-export function equalizerPoints(levels,width,height,motionStart=0,motionEnd=width){
- const zones=12,baseline=height-3,amplitude=Math.max(1,height-8),points=[{x:0,y:baseline}],peaks=[];
+export function equalizerPoints(levels,width,height,motionStart=0,motionEnd=width,options=EQ_DEFAULTS){
+ const settings=normalizeEqualizerSettings(options);
+ const zones=settings.zones,baseline=height-3,amplitude=Math.max(1,height-8)*settings.height/100,points=[{x:0,y:baseline}],peaks=[];
  const from=Math.max(0,Math.min(width,motionStart)),to=Math.max(from,Math.min(width,motionEnd));
  if(to<=from)return [{x:0,y:baseline},{x:width,y:baseline}];
  for(let zone=0;zone<zones;zone++){
@@ -29,10 +53,22 @@ export function equalizerPoints(levels,width,height,motionStart=0,motionEnd=widt
   peaks.push(Math.min(1,Math.sqrt(energy/(end-start))));
  }
  const strongest=Math.max(...peaks);
+ // Normalize the blend so width changes spread peaks without changing the gain.
+ const blended=peaks.map((_,i)=>{
+  if(settings.width===0)return peaks[i];
+  let sum=0,weight=0;
+  peaks.forEach((p,j)=>{const w=Math.exp(-.5*((i-j)/settings.width)**2);sum+=p*w;weight+=w;});
+  return sum/weight;
+ });
+ const blendedMax=Math.max(...blended);
  if(from>0)points.push({x:from,y:baseline});
  for(let zone=0;zone<zones;zone++){
   // Preserve overall loudness while making quieter zones recede from the leader.
-  const peak=strongest>0?strongest*Math.pow(peaks[zone]/strongest,2.4):0;
+  let peak=blendedMax>0?strongest*Math.pow(blended[zone]/blendedMax,settings.contrast):0;
+  const position=(zone+.5)/zones,fade=settings.edgeFade/100;
+  const t=fade>0?Math.min(1,Math.min(position,1-position)/fade):1;
+  // Smootherstep has zero first and second derivatives at either end.
+  peak*=t*t*t*(t*(t*6-15)+10);
   points.push({x:from+(zone+.5)/zones*(to-from),y:baseline-peak*amplitude});
  }
  points.push({x:to,y:baseline});

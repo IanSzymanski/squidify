@@ -25,6 +25,23 @@ The shell is cached by a service worker. A secure origin (HTTPS, or localhost fo
 - Responsive phone layout, full-screen now playing, accessible labels, keyboard controls
 - Storage estimate and persistent storage request; offline status verified against all shell assets
 
+## Equalizer tuning
+
+Settings includes a live full-size and mini preview with eleven controls: zone
+count, peak contrast, sensitivity, peak width, edge fade, attack/release speeds,
+height, glow, fill and line thickness. Adjustments apply immediately to both
+players, save to the device's existing settings store, and can be reset together.
+The default 30% edge fade tapers each end of the active span into the protected
+stationary baseline using a smooth envelope. Neighboring zones join directly
+without manufactured boundary dips.
+
+The preview uses the playing track's decoded spectrum when available, otherwise
+a labeled demo signal. Demo values never enter the actual player. Pause preview
+freezes its signal while still allowing shape adjustments. Reduced-motion mode
+uses a static preview and does not run an animation loop. The visualization does
+not change audio output. Saved values are bounded on load; no library migration
+is needed.
+
 ## Limits
 
 Browser codecs determine which audio files play. DRM/subscription downloads are not supported. Background playback, automatic next track while locked, and media controls remain subject to browser/OS behavior and have not been verified on a physical iPhone. Audio is not gapless and there is no crossfade.

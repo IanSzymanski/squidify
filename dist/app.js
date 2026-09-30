@@ -31,7 +31,7 @@ context.playback.bindEvents();
 async function init() {
   paintIcons();
   try{
-    const [tracks,playlists,folders,saved,playlistOrder]=await Promise.all([db.all('tracks'),db.all('playlists'),db.all('folders'),db.setting('session',{}),db.setting('playlistOrder',[])]);
+    const [tracks,playlists,folders,saved,playlistOrder]=await Promise.all([db.all('tracks'),db.all('playlists'),db.all('folders'),db.setting('session',{}),db.setting('playlistOrder',[]),context.enhancements.loadSettings()]);
     state.tracks=new Map(tracks.map(t=>[t.id,t]));state.playlists=playlists.sort((a,b)=>{const order=Array.isArray(playlistOrder)?playlistOrder:[];const rank=id=>{const i=order.indexOf(id);return i<0?order.length:i;};return rank(a.id)-rank(b.id);});state.folders=folders;state.queue=new PlayQueue(saved.queue);state.queue.prune(new Set(state.tracks.keys()));state.sort=saved.sort||'added';
     audio.volume=typeof saved.volume==='number'?Math.min(1,Math.max(0,saved.volume)):1;audio.muted=!!saved.muted;
     state.storage=await db.storageInfo();state.ready=true;readRoute();
