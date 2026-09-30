@@ -222,3 +222,18 @@ never treated as the active route; no new permissions are requested.
 Verification: 75 automated tests passed, including manual restart after natural
 completion, repeat/shuffle/single/empty queues, retained metadata/context, and
 active output/default-sink icon refresh with unsupported-browser fallback.
+
+## Shell v21 — Play after playlist completion
+
+The user validated v20, then reported that lock-screen Play after the playlist
+ends restarts the final song without audio. The shared Play handler had resumed
+an ended source instead of restarting the queue. It now uses manual Next's
+new-pass/source-load path when the active final source is ended, reloading the
+first song at zero before playback. Shuffle, playlist context and Repeat settings
+are preserved; ordinary paused-source resume is unchanged. This applies to
+player, active-collection, lock-screen and headphone Play controls.
+
+Verification: 78 automated checks passed. Three new regression tests cover all
+Play entry points, single-song/shuffle passes, and synchronous lock-screen Play
+startup. Two of these tests failed against v20 before the fix. The v21 Play
+correction awaits user device confirmation.

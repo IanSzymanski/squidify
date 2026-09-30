@@ -149,6 +149,51 @@ test('Next restarts a completed playlist through both app and headphone actions 
     assert.equal(app.state.queue.playlistId,'playlist-test');assert.equal(app.state.queue.context,'Test playlist');assert.equal(app.state.queue.repeat,'off');
   }
 });
+test('Play after playlist completion reloads the first source for player, collection and external controls',async t=>{
+  for(const control of ['toggle-play','play-view','external']) {
+    const app=await mediaFixture(t),audio=app.element('#audio');
+    app.state.queue.playlistId='playlist-test';app.state.queue.context='Test playlist';app.state.queue.viewKey=app.ui.viewKey();
+    app.state.queue.index=2;await app.playback.loadTrack('c',true);await settlePlayback();
+    const finalSrc=audio.src,calls=audio.playCalls.length;
+    audio.currentTime=audio.duration;audio.ended=true;audio.paused=true;audio.emit('ended');await settlePlayback();
+    assert.equal(app.state.queue.current,'c');assert.equal(app.mediaSession.playbackState,'paused');
+    audio.beforePlay=()=>{
+      assert.equal(app.state.queue.current,'a','Play must restart the playlist instead of resuming its ended last song');
+      assert.notEqual(audio.src,finalSrc);assert.equal(audio.ended,false);assert.equal(audio.currentTime,0,'reload resets the media element before play');
+    };
+    await (control==='external'?app.mediaActions.play():app.actions[control]());
+    assert.equal(app.state.queue.current,'a');assert.equal(audio.paused,false);assert.equal(audio.playCalls.length,calls+1);
+    assert.equal(app.mediaSession.metadata.title,'Song a');assert.equal(app.mediaSession.playbackState,'playing');assert.equal(app.positions.at(-1).position,0);
+    assert.equal(app.state.queue.playlistId,'playlist-test');assert.equal(app.state.queue.context,'Test playlist');assert.equal(app.state.queue.repeat,'off');
+    app.saveSession(true);assert.equal(app.db.stores.settings.get('session').value.queue.index,0);assert.equal(app.db.stores.settings.get('session').value.time,0);
+  }
+});
+test('Play after completion reloads a single-song source and restarts a complete shuffled pass without changing modes',async t=>{
+  for(const single of [true,false]) {
+    const app=await mediaFixture(t),audio=app.element('#audio'),q=app.state.queue;
+    if(single){q.source=['a'];q.order=['a'];q.index=0;}else{q.setShuffle(true,app.state.tracks);q.index=q.order.length-1;}
+    await app.playback.loadTrack(q.current,true);const lastSrc=audio.src;
+    audio.currentTime=audio.duration;audio.ended=true;audio.paused=true;audio.emit('ended');await settlePlayback();
+    audio.beforePlay=()=>{assert.equal(audio.ended,false);assert.equal(audio.currentTime,0);};
+    await app.actions['toggle-play']();
+    assert.equal(q.index,0);assert.equal(audio.paused,false);assert.equal(q.shuffle,!single);assert.equal(q.repeat,'off');
+    assert.equal(audio.playCalls.at(-1),audio.src);assert.equal(app.positions.at(-1).position,0);
+    if(single)assert.equal(audio.src,lastSrc);else assert.deepEqual([...q.order].sort(),['a','b','c']);
+    audio.beforePlay=null;audio.currentTime=17;await app.actions['toggle-play']();await app.actions['toggle-play']();
+    assert.equal(audio.currentTime,17,'ordinary pause/resume must retain position');assert.equal(q.index,0);
+  }
+});
+test('lock-screen Play starts the first song within the external action after the final song ends',async t=>{
+  const app=await mediaFixture(t),audio=app.element('#audio');
+  app.state.queue.index=2;await app.playback.loadTrack('c',true);await settlePlayback();
+  audio.currentTime=audio.duration;audio.ended=true;audio.paused=true;audio.emit('ended');await settlePlayback();
+  let inNativeAction=false;
+  audio.beforePlay=()=>assert.equal(inNativeAction,true,'cached restart must play inside the lock-screen action');
+  const count=audio.playCalls.length;
+  inNativeAction=true;const started=app.mediaActions.play();inNativeAction=false;
+  assert.equal(app.state.queue.current,'a');assert.equal(audio.playCalls.length,count+1);assert.equal(audio.paused,false);
+  await started;assert.equal(app.mediaSession.playbackState,'playing');assert.equal(app.positions.at(-1).position,0);
+});
 test('output icon follows the exposed active sink and named system default, never a merely available headset',async t=>{
   let outputs=[{kind:'audiooutput',deviceId:'default',label:'Default - Speakers'},{kind:'audiooutput',deviceId:'buds',label:'AirPods Pro'},{kind:'audiooutput',deviceId:'speaker',label:'Speakers'}],changed,calls=0;
   const mediaDevices={enumerateDevices:async()=>{calls++;return outputs;},addEventListener:(name,f)=>{if(name==='devicechange')changed=f;}};
@@ -395,16 +440,16 @@ test('installed-update toast is shown once, only for the running ready release',
   await app.offline.announceInstalled('squidify-shell-v5',true);
   assert.equal(app.element('#toast').hidden,true);
   assert.equal(app.db.stores.settings.has('installedShellVersion'),false);
-  await Promise.all([app.offline.announceInstalled('squidify-shell-v20',true),app.offline.announceInstalled('squidify-shell-v20',true)]);
+  await Promise.all([app.offline.announceInstalled('squidify-shell-v21',true),app.offline.announceInstalled('squidify-shell-v21',true)]);
   assert.match(app.element('#toast').textContent,/Squidify updated/);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v20');
-  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v20',true);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v21');
+  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v21',true);
   assert.equal(reopened.element('#toast').hidden,true);
 });
 test('a first install records its release without claiming an update',async t=>{
-  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v20',false);
+  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v21',false);
   assert.equal(app.element('#toast').hidden,true);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v20');
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v21');
 });
 
 

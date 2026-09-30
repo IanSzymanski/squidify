@@ -79,6 +79,9 @@ export function createPlayback(context) {
   }
   async function togglePlay() {
     if(!state.tracks.size)return addMusicDialog();
+    // Resume cannot reliably revive an ended WebKit source. A completed queue
+    // starts a fresh pass through the same load-and-play path as manual Next.
+    if(audio.ended&&loadedTrack()&&state.queue.index===state.queue.order.length-1)return nextTrack(true);
     if(playIntent||!audio.paused){playIntent=false;audio.pause();return;}
     if(!state.queue.current)return startView();
     if(activeId!==state.queue.current||!audio.src)return loadTrack(state.queue.current,true);
