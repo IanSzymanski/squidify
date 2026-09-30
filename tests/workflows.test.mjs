@@ -25,17 +25,140 @@ class Element {
   showModal(){this.open=true;}close(){this.open=false;}focus(){}click(){this.clicks=(this.clicks||0)+1;}append(...children){this.children=children;}querySelectorAll(){return [];}querySelector(){return new Element();}
 }
 class FakeAudio extends Element {
-  constructor(){super();this.src='';this.paused=true;this.currentTime=0;this.duration=120;this.volume=1;this.muted=false;this.playbackRate=1;}
-  async play(){this.paused=false;this.emit('play');}pause(){const old=this.paused;this.paused=true;if(!old)this.emit('pause');}load(){this.currentTime=0;if(this.src){this.emit('loadedmetadata');this.onloadedmetadata?.();}}
+  constructor(){super();this.src='';this.paused=true;this.ended=false;this.currentTime=0;this.duration=120;this.volume=1;this.muted=false;this.playbackRate=1;}
+  async play(){this.paused=false;this.ended=false;this.emit('play');}pause(){const old=this.paused;this.paused=true;if(!old)this.emit('pause');}load(){this.currentTime=0;this.ended=false;if(this.src){this.emit('loadedmetadata');this.onloadedmetadata?.();}}
 }
-async function harness(t,db=memoryStore()){
+
+async function mediaFixture(t,options={}) {
+  const db=memoryStore();
+  for(const id of ['a','b','c','d'])await db.saveTrack({id,title:`Song ${id}`,artist:`Artist ${id}`,album:`Album ${id}`,duration:120},new Blob([id],{type:'audio/mpeg'}));
+  await db.setSetting('session',{queue:{source:['a','b','c'],order:['a','b','c'],index:0},time:24});
+  return harness(t,db,{random:()=>0.5,...options});
+}
+const settlePlayback=()=>new Promise(resolve=>setImmediate(resolve));
+
+test('media controls register once, remove seek offsets and resume without rebuilding the queue',async t=>{
+  const app=await mediaFixture(t),audio=app.element('#audio'),order=[...app.state.queue.order],src=audio.src;
+  assert.equal(app.mediaActions.seekbackward,null);assert.equal(app.mediaActions.seekforward,null);
+  assert.equal(app.mediaSession.metadata.title,'Song a');assert.equal(app.mediaSession.playbackState,'paused');
+  assert.equal(app.positions.at(-1).position,24);
+  const count=app.registrations.length,listeners=audio.events.ended.length;
+  app.playback.setupMediaSession();app.playback.bindEvents();
+  assert.equal(app.registrations.length,count);assert.equal(audio.events.ended.length,listeners);
+  await app.mediaActions.play();await app.mediaActions.play();
+  assert.equal(audio.paused,false);assert.equal(audio.src,src);assert.equal(audio.currentTime,24);
+  assert.equal(app.mediaSession.playbackState,'playing');assert.deepEqual([...app.state.queue.order],order);
+  app.mediaActions.pause();app.mediaActions.pause();assert.equal(audio.paused,true);
+  assert.equal(app.mediaSession.playbackState,'paused');assert.equal(audio.currentTime,24);
+  await app.mediaActions.play();assert.equal(audio.currentTime,24);
+  app.mediaActions.stop();assert.equal(audio.paused,true);assert.equal(audio.currentTime,0);
+  assert.equal(app.positions.at(-1).position,0);assert.deepEqual([...app.state.queue.order],order);
+});
+
+test('external Next matches in-app Next for inserted queue items, shuffle, repeat and boundaries',async t=>{
+  for(const shuffle of [false,true])for(const repeat of ['off','one','all']) {
+    const remote=await mediaFixture(t),button=await mediaFixture(t);
+    remote.state.queue.setShuffle(shuffle,remote.state.tracks);remote.state.queue.add('d',true);
+    button.state.queue.source=[...remote.state.queue.source];button.state.queue.order=[...remote.state.queue.order];
+    button.state.queue.shuffle=shuffle;remote.state.queue.repeat=button.state.queue.repeat=repeat;
+    await remote.mediaActions.play();await button.actions['toggle-play']();
+    for(let press=0;press<5;press++) {
+      remote.mediaActions.nexttrack();button.actions.next();await settlePlayback();
+      assert.equal(remote.state.queue.current,button.state.queue.current);
+      assert.equal(remote.state.queue.index,button.state.queue.index);
+      assert.deepEqual([...remote.state.queue.order],[...button.state.queue.order]);
+      assert.equal(remote.element('#audio').paused,button.element('#audio').paused);
+      assert.equal(remote.mediaSession.metadata.title,`Song ${remote.state.queue.current}`);
+    }
+    assert.equal(remote.mediaSession.playbackState,repeat==='all'?'playing':'paused');
+  }
+});
+
+test('external Previous restarts after three seconds then follows the actual played order',async t=>{
+  const app=await mediaFixture(t),audio=app.element('#audio');
+  app.mediaActions.nexttrack();await settlePlayback();assert.equal(app.state.queue.current,'b');
+  audio.currentTime=4;app.mediaActions.previoustrack();
+  assert.equal(app.state.queue.current,'b');assert.equal(audio.currentTime,0);assert.equal(app.positions.at(-1).position,0);
+  app.mediaActions.previoustrack();await settlePlayback();assert.equal(app.state.queue.current,'a');
+  app.mediaActions.previoustrack();await settlePlayback();assert.equal(app.state.queue.index,0);
+});
+
+test('rapid skips perform one action each and publish only the latest loaded song',async t=>{
+  const app=await mediaFixture(t);app.mediaActions.nexttrack();app.mediaActions.nexttrack();
+  assert.equal(app.state.queue.index,2);assert.equal(app.mediaSession.metadata,null);
+  assert.equal(app.positions.at(-1),undefined);await settlePlayback();
+  assert.equal(app.playback.activeTrackId(),'c');assert.equal(app.mediaSession.metadata.title,'Song c');
+  const audio=app.element('#audio');app.state.queue.index=0;await app.playback.loadTrack('a',false);
+  app.mediaActions.nexttrack();app.mediaActions.pause();await settlePlayback();
+  assert.equal(app.state.queue.current,'b');assert.equal(audio.paused,true);assert.equal(app.mediaSession.playbackState,'paused');
+});
+
+test('external and native seeking validate bounds and refresh position, duration and rate',async t=>{
+  const app=await mediaFixture(t),audio=app.element('#audio');
+  for(const [time,expected] of [[-5,0],[999,120],[37,37]]) {
+    app.mediaActions.seekto({seekTime:time});assert.equal(audio.currentTime,expected);assert.equal(app.positions.at(-1).position,expected);
+  }
+  for(const seekTime of [NaN,Infinity,undefined,'40'])app.mediaActions.seekto({seekTime});
+  app.mediaActions.seekto();assert.equal(audio.currentTime,37);
+  audio.currentTime=58;audio.emit('seeked');assert.equal(app.positions.at(-1).position,58);
+  audio.duration=60;audio.emit('durationchange');assert.equal(app.positions.at(-1).duration,60);
+  audio.playbackRate=1.5;audio.emit('ratechange');assert.equal(app.positions.at(-1).playbackRate,1.5);
+  for(const [field,value] of [['currentTime',NaN],['currentTime',Infinity],['duration',NaN],['duration',Infinity],['duration',0],['playbackRate',0],['playbackRate',NaN]]) {
+    audio.duration=120;audio.currentTime=20;audio.playbackRate=1;audio[field]=value;
+    app.playback.updatePositionState();assert.equal(app.positions.at(-1),undefined);
+  }
+  audio.duration=NaN;app.mediaActions.seekto({seekTime:0});assert.equal(audio.currentTime,20);
+  audio.duration=120;audio.currentTime=-10;audio.playbackRate=1;app.playback.updatePositionState();assert.equal(app.positions.at(-1).position,0);
+});
+
+test('completion respects repeat-one, repeat-all and end-of-queue with synchronized session state',async t=>{
+  for(const repeat of ['off','one','all']) {
+    const app=await mediaFixture(t),audio=app.element('#audio');app.state.queue.index=2;app.state.queue.repeat=repeat;
+    await app.playback.loadTrack('c',true);audio.currentTime=120;audio.ended=true;audio.paused=true;audio.emit('ended');await settlePlayback();
+    assert.equal(app.state.queue.current,{off:'c',one:'c',all:'a'}[repeat]);
+    assert.equal(app.mediaSession.metadata.title,`Song ${app.state.queue.current}`);
+    assert.equal(app.mediaSession.playbackState,repeat==='off'?'paused':'playing');
+    assert.equal(app.positions.at(-1).position,repeat==='off'?120:0);
+  }
+});
+
+test('metadata and artwork refresh, and unloading or failed loading clears stale session data',async t=>{
+  const app=await mediaFixture(t),audio=app.element('#audio');
+  app.state.tracks.get('a').title='Renamed';app.ui.mediaArtwork=()=>({src:'https://squidify.example/local-cover.png',type:'image/png'});
+  app.playback.updateMediaSession();assert.equal(app.mediaSession.metadata.title,'Renamed');
+  assert.equal(app.mediaSession.metadata.artist,'Artist a');assert.equal(app.mediaSession.metadata.album,'Album a');
+  assert.equal(app.mediaSession.metadata.artwork[0].src,'https://squidify.example/local-cover.png');
+  audio.emit('emptied');assert.equal(app.mediaSession.metadata,null);
+  audio.emit('loadedmetadata');assert.equal(app.mediaSession.metadata.title,'Renamed');
+  await app.actions['remove-track']({dataset:{id:'a'}});
+  assert.equal(app.mediaSession.metadata,null);assert.equal(app.mediaSession.playbackState,'none');assert.equal(app.positions.at(-1),undefined);
+  app.state.queue.order.push('d');app.state.queue.index=2;app.db.stores.media.delete('d');await app.playback.loadTrack('d',false);
+  assert.equal(audio.src,'');assert.equal(app.mediaSession.metadata,null);assert.equal(app.mediaSession.playbackState,'none');
+  app.state.queue.index=1;await app.playback.loadTrack('c',false);assert.equal(app.mediaSession.metadata.title,'Song c');
+  audio.emit('error');assert.equal(app.mediaSession.metadata,null);assert.equal(app.positions.at(-1),undefined);
+});
+
+test('missing or partially unsupported Media Session leaves playback and other handlers usable',async t=>{
+  const absent=await mediaFixture(t,{absent:true});await absent.actions['toggle-play']();
+  absent.actions.next();await settlePlayback();assert.equal(absent.state.queue.current,'b');
+  absent.element('#audio').emit('ratechange');absent.playback.setupMediaSession();
+  const partial=await mediaFixture(t,{unsupported:['seekbackward','previoustrack'],positionThrows:true,stateThrows:true});
+  assert.equal(typeof partial.mediaActions.nexttrack,'function');assert.equal(partial.mediaActions.seekforward,null);
+  await partial.mediaActions.play();partial.mediaActions.nexttrack();await settlePlayback();assert.equal(partial.state.queue.current,'b');
+  partial.mediaActions.pause();assert.equal(partial.element('#audio').paused,true);
+});
+async function harness(t,db=memoryStore(),mediaOptions={}){
   const elements=new Map(),events={},timers=new Set(),waveCanvases=[];
   const element=s=>{if(!elements.has(s)){const el=s==='#audio'?new FakeAudio():new Element();if(['#queuePanel','#toast','#importBanner'].includes(s))el.hidden=true;elements.set(s,el);}return elements.get(s);};
   const document={querySelector:element,querySelectorAll:selector=>selector==='.audio-wave'?waveCanvases:[],addEventListener:(name,f)=>{(events['doc:'+name]||=[]).push(f);},createElement:()=>new Element(),body:Object.assign(new Element(),{append(){}}),hidden:false};
   const window={addEventListener:(name,f)=>{events[name]=f;},scrollTo(){}};
   let hash='#library';const location={href:'https://squidify.example/',get hash(){return hash;},set hash(v){hash=v;queueMicrotask(()=>events.hashchange?.());}};
-  const actions={};const navigator={userAgent:'Test',platform:'Test',maxTouchPoints:0,onLine:true,storage:{persist:async()=>true},mediaSession:{setActionHandler:(name,f)=>actions[name]=f,setPositionState(){}}};
+  const actions={},registrations=[],positions=[];
+  const mediaSession={setActionHandler:(name,f)=>{registrations.push(name);if(mediaOptions.unsupported?.includes(name))throw new Error('Unsupported action');actions[name]=f;},setPositionState:value=>{if(mediaOptions.positionThrows)throw new Error('Unsupported position');positions.push(value);}};
+  const navigator={userAgent:'Test',platform:'Test',maxTouchPoints:0,onLine:true,storage:{persist:async()=>true},mediaSession:mediaOptions.absent?undefined:mediaSession};
+  if(mediaOptions.stateThrows)Object.defineProperty(mediaSession,'playbackState',{set(){throw new Error('Unsupported state');}});
   const context=vm.createContext({document,window,navigator,location,URL,Blob,File,TextEncoder,DataView,Uint8Array,ArrayBuffer,crypto:{subtle:webcrypto.subtle,randomUUID},Audio:FakeAudio,MediaMetadata:class{constructor(value){Object.assign(this,value);}},AbortController,FormData,matchMedia:()=>({matches:false}),console:{error(){}},setTimeout:(f,ms)=>{const timer=setTimeout(f,ms);timers.add(timer);return timer;},clearTimeout:id=>{clearTimeout(id);timers.delete(id);}});
+  if(mediaOptions.random)context.Math=Object.assign(Object.create(Math),{random:mediaOptions.random});
   // Evaluate the real ES module graph in an isolated browser-like context.
   // Only IndexedDB is replaced; module imports/exports are not stripped.
   const modules=new Map();
@@ -50,7 +173,7 @@ async function harness(t,db=memoryStore()){
   await entry.evaluate();await entry.namespace.ready;
   const {context:app,actions:appActions}=entry.namespace;
   t.after(()=>{for(const timer of timers)clearTimeout(timer);});
-  return {waveCanvases,enhancements:app.enhancements,ui:app.ui,offline:app.offline,state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,saveTrackDetails:app.playlists.saveTrackDetails,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,emitDocument:(name,event)=>events['doc:'+name]?.forEach(fn=>fn(event))};
+  return {waveCanvases,enhancements:app.enhancements,ui:app.ui,offline:app.offline,state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,saveTrackDetails:app.playlists.saveTrackDetails,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,mediaSession,registrations,positions,playback:app.playback,emitDocument:(name,event)=>events['doc:'+name]?.forEach(fn=>fn(event))};
 }
 test('empty library starts with working folder and file input alternatives',async t=>{
   const app=await harness(t);assert.match(app.element('#main').innerHTML,/Your music belongs here/);
@@ -180,16 +303,16 @@ test('installed-update toast is shown once, only for the running ready release',
   await app.offline.announceInstalled('squidify-shell-v5',true);
   assert.equal(app.element('#toast').hidden,true);
   assert.equal(app.db.stores.settings.has('installedShellVersion'),false);
-  await Promise.all([app.offline.announceInstalled('squidify-shell-v17',true),app.offline.announceInstalled('squidify-shell-v17',true)]);
+  await Promise.all([app.offline.announceInstalled('squidify-shell-v18',true),app.offline.announceInstalled('squidify-shell-v18',true)]);
   assert.match(app.element('#toast').textContent,/Squidify updated/);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v17');
-  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v17',true);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v18');
+  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v18',true);
   assert.equal(reopened.element('#toast').hidden,true);
 });
 test('a first install records its release without claiming an update',async t=>{
-  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v17',false);
+  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v18',false);
   assert.equal(app.element('#toast').hidden,true);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v17');
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v18');
 });
 
 

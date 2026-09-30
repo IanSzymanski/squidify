@@ -55,6 +55,40 @@ is needed.
 
 Browser codecs determine which audio files play. DRM/subscription downloads are not supported. Background playback, automatic next track while locked, and media controls remain subject to browser/OS behavior and have not been verified on a physical iPhone. Audio is not gapless and there is no crossfade.
 
+### SQ-031: external music controls
+
+The Media Session handlers use the same player and queue as the in-app controls.
+Play/pause preserve the current queue and position; manual Next honors queued
+items, shuffle and repeat-all, and advances even with repeat-one enabled.
+Previous restarts after three seconds, otherwise returning through played order.
+Explicit seekbackward/seekforward handlers are cleared to prefer song navigation;
+seekto retains bounded progress-bar seeking. Stop pauses and resets to zero.
+The browser/OS chooses the displayed controls and forwards headphone commands;
+clearing seek handlers cannot guarantee a particular lock-screen layout.
+
+Each registration is guarded independently and occurs once per playback engine.
+Metadata, artwork, playback state and valid position data follow audio events;
+unloading or failed loading clears stale session data. Shell v18 delivers this
+change through the existing offline update flow without changing saved music.
+
+Automated integration coverage exercises real playback actions, queue insertion,
+shuffle/repeat boundaries, repeated commands, seeking, artwork/state updates,
+failed loading, unloading and absent/partially unsupported Media Session APIs.
+The offline-shell suite verifies cached launch and module access without network.
+
+Physical-device verification remains pending (no hardware was available):
+
+| Surface | Required checks | Result |
+|---|---|---|
+| iPhone Safari and installed Home Screen app | Lock screen/Control Center buttons; one song action per press; metadata/artwork; progress seeking; boundaries; offline playback | Not tested |
+| Wired and Bluetooth headphones, locked and unlocked | Play/pause; next/previous; rapid repeated skips; offline playback | Not tested |
+
+For each hardware run, record device model, iOS/browser versions, accessory model,
+visible controls and observed behavior. Use multiple locally saved songs and
+include shuffle, repeat-one, repeat-all and the queue end. If seeking buttons
+remain or commands are not delivered, record that limitation; do not infer
+universal compatibility from automated results.
+
 Storage is local to this origin, browser profile, and sometimes installed-app container. It is not a backup or cross-device sync. Keep original files. Clearing site data or uninstalling can remove all music and playlists; a browser can reclaim nonpersistent storage. Persistence requests may be declined by the browser.
 
 For large libraries, import in smaller batches and watch available storage. Duplicate detection hashes file size plus the first/last 64 KiB, not every byte; it avoids loading entire large audio files into memory.
