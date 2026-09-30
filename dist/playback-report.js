@@ -11,7 +11,8 @@ export function createPlaybackReport(context) {
     try{
       const {audio,state}=context,session=navigator.audioSession;
       events.push({at:new Date().toISOString(),release:RELEASE_LABEL,event,hidden:document.hidden,
-        paused:audio.paused,ended:audio.ended,ready:audio.readyState,network:audio.networkState??null,restartReady:audio.restartReadyState??null,
+        paused:audio.paused,ended:audio.ended,seeking:!!audio.seeking,ready:audio.readyState,network:audio.networkState??null,restartReady:audio.restartReadyState??null,
+        muted:audio.muted,volume:audio.volume,rate:audio.playbackRate,
         position:Number.isFinite(audio.currentTime)?Math.round(audio.currentTime*10)/10:null,
         duration:Number.isFinite(audio.duration)?Math.round(audio.duration*10)/10:null,
         queueIndex:state.queue.index,queueLength:state.queue.order.length,

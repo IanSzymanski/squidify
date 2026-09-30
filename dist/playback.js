@@ -21,6 +21,7 @@ export function createPlayback(context) {
   let activeId = null, playGeneration = 0, playIntent = false, priming = false, audioUnlocked = false, stateTimer, lastSavedAt = 0;
   let eventsBound = false, mediaSessionBound = false;
   let metadataReady = false, restorePosition = 0, playbackStarted = false;
+  let completedGeneration = -1, restartCheck = null, progressSample = 0;
   const playbackReport=createPlaybackReport(context);
 
   function musicSession() {
@@ -34,6 +35,60 @@ export function createPlayback(context) {
   function requestAudioPlay() {
     musicSession();updatePlaybackState();playbackReport.record('play-request');
     return audio.play();
+  }
+
+  function sourceCompleted(){return completedGeneration===playGeneration||audio.ended;}
+  function cancelRestartCheck(){if(restartCheck)clearTimeout(restartCheck.timer);restartCheck=null;}
+  function restartAdvanced(){
+    const check=restartCheck;
+    if(!check||!hasCurrentMetadata()||audio.paused||audio.seeking||audio.currentTime<=check.position+.05)return false;
+    playbackReport.record('restart-progress',{recovered:check.recovered});
+    cancelRestartCheck();playbackStarted=true;updatePositionState();return true;
+  }
+  function scheduleRestartCheck(check,delay){
+    clearTimeout(check.timer);check.scheduledAt=Date.now();
+    check.timer=setTimeout(()=>{
+      if(restartCheck!==check)return;
+      if(check.generation!==playGeneration||!playIntent||audio.paused||audio.ended||audio.error||navigator.audioSession?.state==='interrupted'){cancelRestartCheck();return;}
+      if(restartAdvanced())return;
+      // A suspended page can deliver timers much later. Never reclaim audio
+      // on a stale timer, or treat ordinary buffering as a frozen clock.
+      if(Date.now()-check.scheduledAt>delay+5000||!check.playing||audio.readyState<3||audio.seeking||audio.playbackRate<=0){
+        playbackReport.record('restart-unconfirmed');cancelRestartCheck();return;
+      }
+      if(check.recovered){
+        playbackReport.record('restart-stalled');cancelRestartCheck();pausePlayback();
+        toast('Playback did not restart. Open Squidify and tap Play.',true);return;
+      }
+      check.recovered=true;check.playing=false;check.position=0;
+      playbackReport.record('restart-reload');metadataReady=false;playbackStarted=false;restorePosition=0;updatePositionState();
+      // v24's prepared player could emit playing but stay at zero. Re-select
+      // its cached song once on the now-active native player, without changing
+      // queue, media-session ownership, category, volume or output route.
+      scheduleRestartCheck(check,8000);
+      try{
+        audio.src=check.url;
+        requestAudioPlay().catch(e=>restartRejected(check,e));
+      }catch(e){restartRejected(check,e);}
+    },delay);
+  }
+  function restartRejected(check,error){
+    if(restartCheck!==check||check.generation!==playGeneration||!playIntent)return;
+    playbackReport.record('restart-rejected',{error:error.name});cancelRestartCheck();pausePlayback();
+    toast('Playback did not restart. Open Squidify and tap Play.',true);
+  }
+  function watchRestart(generation,url){
+    cancelRestartCheck();
+    const check={generation,url,position:audio.currentTime||0,recovered:false,playing:false};
+    restartCheck=check;scheduleRestartCheck(check,8000);
+  }
+
+  function observeProgress(){
+    // A cancelled recovery must not leave the native progress bar disabled.
+    // Seeking establishes a new baseline; only subsequent clock movement is
+    // evidence of playback, never the seek itself or a lone playing event.
+    if(!audio.paused&&!audio.seeking&&audio.readyState>=3&&audio.currentTime>progressSample+.05)playbackStarted=true;
+    progressSample=audio.currentTime;
   }
 
   async function mediaURL(id) {
@@ -70,12 +125,12 @@ export function createPlayback(context) {
   }
   async function loadTrack(id,autoplay=true,restoreTime=0) {
     if(!byId(id))return;
-    const sourceEnded=audio.ended;
+    const sourceEnded=sourceCompleted();cancelRestartCheck();
     const wasPlaying=playbackStarted&&!audio.paused&&!audio.ended;
     const generation=++playGeneration;playIntent=autoplay;
     // Keep the native session alive while disk access finishes. Only its
     // position is cleared; ending the session here can suspend a locked page.
-    metadataReady=false;playbackStarted=false;updatePlaybackState();updatePositionState();playbackReport.record('load-track');
+    metadataReady=false;playbackStarted=false;progressSample=restoreTime;updatePlaybackState();updatePositionState();playbackReport.record('load-track',{sourceCompleted:sourceEnded});
     if(autoplay)primeAudio();
     try {
       // Cached neighbors must set the source and call play inside the media
@@ -87,16 +142,20 @@ export function createPlayback(context) {
       priming=false;activeId=id;restorePosition=restoreTime;
       if(sameSource){
         // Reuse an already loaded source for single-song/repeat-one restarts.
-        metadataReady=true;playbackStarted=wasPlaying;audio.currentTime=restoreTime>0&&Number.isFinite(audio.duration)?Math.min(restoreTime,Math.max(0,audio.duration-0.5)):0;restorePosition=0;
+        metadataReady=true;playbackStarted=wasPlaying;
+        const position=restoreTime>0&&Number.isFinite(audio.duration)?Math.min(restoreTime,Math.max(0,audio.duration-0.5)):0;
+        if(audio.currentTime!==position)audio.currentTime=position;
+        restorePosition=0;
       }else{
         // Assigning src already selects the new resource. An extra load()
         // tears down the native player again during a lock-screen handoff.
         audio.src=url;
       }
+      if(autoplay&&sourceEnded&&context.isIOS)watchRestart(generation,url);
       if(prepared)refreshMetadata();
       const started=playIntent?requestAudioPlay().catch(e=>{
         if(generation===playGeneration&&e.name!=='AbortError'){
-          playIntent=false;playbackStarted=false;updatePlaybackState();updatePositionState();
+          cancelRestartCheck();playIntent=false;playbackStarted=false;updatePlaybackState();updatePositionState();
           playbackReport.record('play-rejected',{error:e.name});
           toast(e.name==='NotAllowedError'?'Tap Play to start listening.':'This browser could not play this audio format. Try MP3 or AAC/M4A.',true);
         }
@@ -117,13 +176,13 @@ export function createPlayback(context) {
     if(!state.tracks.size)return addMusicDialog();
     // Resume cannot reliably revive an ended WebKit source. A completed queue
     // starts a fresh pass through the same load-and-play path as manual Next.
-    if(audio.ended&&loadedTrack()&&state.queue.index===state.queue.order.length-1)return nextTrack(true);
+    if(sourceCompleted()&&loadedTrack()&&state.queue.index===state.queue.order.length-1)return nextTrack(true);
     if(playIntent||!audio.paused)return pausePlayback();
     return resumePlayback();
   }
   async function resumePlayback() {
     if(!state.tracks.size)return addMusicDialog();
-    if(audio.ended&&loadedTrack()&&state.queue.index===state.queue.order.length-1)return nextTrack(true);
+    if(sourceCompleted()&&loadedTrack()&&state.queue.index===state.queue.order.length-1)return nextTrack(true);
     if(!state.queue.current)return startView();
     // External Play is idempotent, including while a source read is pending.
     if(playIntent&&!loadedTrack()){musicSession();updatePlaybackState();return;}
@@ -197,13 +256,16 @@ export function createPlayback(context) {
   }
   function seekTo(time) {
     if(!hasCurrentMetadata()||!Number.isFinite(time)||!Number.isFinite(audio.duration)||audio.duration<=0)return;
+    completedGeneration=-1;cancelRestartCheck();
     audio.currentTime=Math.min(audio.duration,Math.max(0,time));
+    progressSample=audio.currentTime;
     updateProgress();updatePositionState();saveSession();
   }
   function pausePlayback() {
-    playIntent=false;playbackStarted=false;audio.pause();updatePlaybackState();updatePositionState();saveSession();playbackReport.record('pause-request');
+    cancelRestartCheck();playIntent=false;playbackStarted=false;audio.pause();updatePlaybackState();updatePositionState();saveSession();playbackReport.record('pause-request');
   }
   function unloadAudio() {
+    cancelRestartCheck();completedGeneration=-1;
     playGeneration++;playIntent=false;priming=false;activeId=null;metadataReady=false;restorePosition=0;playbackStarted=false;
     audio.pause();audio.removeAttribute('src');audio.load();audio.clearRestart?.();clearMediaSession();
   }
@@ -232,18 +294,21 @@ export function createPlayback(context) {
   window.addEventListener('pageshow',()=>syncLifecycle('pageshow'));
   document.addEventListener('visibilitychange',()=>syncLifecycle(document.hidden?'hidden':'visible'));
   audio.addEventListener('play',()=>{audioUnlocked=true;if(priming||audio.paused||!loadedTrack())return;playIntent=true;renderPlayer();updatePlaybackState();updatePositionState();});
-  audio.addEventListener('playing',()=>{if(!hasCurrentMetadata()||audio.paused||audio.ended)return;playbackStarted=true;renderPlayer();updatePlaybackState();updatePositionState();});
+  audio.addEventListener('playing',()=>{if(!hasCurrentMetadata()||audio.paused||audio.ended)return;
+    if(restartCheck){if(!restartCheck.playing){restartCheck.playing=true;scheduleRestartCheck(restartCheck,2500);}}
+    else playbackStarted=true;
+    renderPlayer();updatePlaybackState();updatePositionState();});
   audio.addEventListener('waiting',()=>{if(!loadedTrack())return;playbackStarted=false;updatePlaybackState();updatePositionState();});
-  audio.addEventListener('pause',()=>{if(priming||!audio.paused||!hasCurrentMetadata())return;playIntent=false;playbackStarted=false;renderPlayer();saveSession();updatePlaybackState();updatePositionState();});
-  audio.addEventListener('ended',()=>{if(!priming)nextTrack(false);});
-  audio.addEventListener('timeupdate',()=>{if(!hasCurrentMetadata())return;updateProgress();updatePositionState();if(Date.now()-lastSavedAt>5000){lastSavedAt=Date.now();saveSession();}});
+  audio.addEventListener('pause',()=>{if(priming||!audio.paused||!hasCurrentMetadata())return;cancelRestartCheck();playIntent=false;playbackStarted=false;renderPlayer();saveSession();updatePlaybackState();updatePositionState();});
+  audio.addEventListener('ended',()=>{if(!priming&&loadedTrack()){completedGeneration=playGeneration;cancelRestartCheck();nextTrack(false);}});
+  audio.addEventListener('timeupdate',()=>{if(!hasCurrentMetadata())return;restartAdvanced();observeProgress();updateProgress();updatePositionState();if(Date.now()-lastSavedAt>5000){lastSavedAt=Date.now();saveSession();}});
   audio.addEventListener('loadedmetadata',refreshMetadata);
-  for(const name of ['seeking','seeked','durationchange','ratechange'])audio.addEventListener(name,()=>{if(priming)return;updateProgress();updatePositionState();if(name==='seeked')saveSession();});
+  for(const name of ['seeking','seeked','durationchange','ratechange'])audio.addEventListener(name,()=>{if(priming)return;if(name==='seeking'||name==='seeked')progressSample=audio.currentTime;updateProgress();updatePositionState();if(name==='seeked')saveSession();});
   audio.addEventListener('emptied',()=>{if(audio.readyState>=1)return;metadataReady=false;if(activeId)updatePositionState();else clearMediaSession();});
   audio.addEventListener('error',()=>{if(priming||!audio.getAttribute('src'))return;unloadAudio();renderPlayer();toast('This file cannot be played in this browser. Try another song or an MP3/AAC copy.',true);});
   audio.addEventListener('volumechange',()=>{renderPlayer();saveSession();});
   for(const event of ['play','playing','pause','waiting','stalled','ended','emptied','loadedmetadata','error'])audio.addEventListener(event,()=>playbackReport.record(event));
-  try{navigator.audioSession?.addEventListener?.('statechange',()=>playbackReport.record('audio-session-state'));}catch{}
+  try{navigator.audioSession?.addEventListener?.('statechange',()=>{if(navigator.audioSession.state==='interrupted')cancelRestartCheck();playbackReport.record('audio-session-state');});}catch{}
   }
 
   function activeTrackId() { return activeId; }
@@ -288,5 +353,5 @@ export function createPlayback(context) {
   'remove-track':async b=>{const id=b.dataset.id;await db.deleteTrack(id);if(id===activeId||id===state.queue.current)unloadAudio();state.tracks.delete(id);state.playlists.forEach(p=>{p.trackIds=p.trackIds.filter(x=>x!==id);});state.queue.prune(new Set(state.tracks.keys()));prepareNeighbors();if(mediaURLs.has(id)){URL.revokeObjectURL(mediaURLs.get(id));mediaURLs.delete(id);}ui.releaseArtwork(id);modal.close();render();saveSession();toast('Song removed from this device.');}
   };
 
-  return { isCurrentView, loadTrack, togglePlay, nextTrack, previousTrack, toggleShuffle, progress, updatePositionState, updateMediaSession, saveSession, activeTrackId, isPriming, setupMediaSession, bindEvents, reportPanel:playbackReport.panel, actions };
+  return { isCurrentView, loadTrack, togglePlay, nextTrack, previousTrack, toggleShuffle, seekTo, progress, updatePositionState, updateMediaSession, saveSession, activeTrackId, isPriming, setupMediaSession, bindEvents, reportPanel:playbackReport.panel, actions };
 }

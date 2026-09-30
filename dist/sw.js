@@ -1,5 +1,5 @@
 /* Squidify caches only its own app shell. Audio is in device-local IndexedDB. */
-const VERSION = 'squidify-shell-v24';
+const VERSION = 'squidify-shell-v25';
 const SHELL = ['./','./index.html','./styles.css','./app.js','./context.js','./audio-output.js','./interface.js','./gestures.js','./import.js','./playlists.js','./playback.js','./playback-report.js','./offline.js','./release.js','./motion.js','./enhancements.js','./spectrum.js','./bricolage-700.ttf','./bricolage-800.ttf','./core.js','./storage.js','./metadata.js','./icons.js','./squid-mark-v9.png','./manifest.webmanifest','./apple-touch-icon.png','./apple-touch-icon.png?v=10','./apple-touch-icon-precomposed.png','./apple-touch-icon-precomposed.png?v=10','./favicon.ico','./icon-192-v9.png','./icon-512-v9.png','./icon-maskable-v9.png','./apple-touch-icon-v9.png','./favicon-32-v9.png'];
 const absolute = path => new URL(path,self.registration.scope).href;
 const shellURLs = new Set(SHELL.map(absolute));

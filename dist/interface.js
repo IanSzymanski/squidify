@@ -269,7 +269,7 @@ export function createInterface(context) {
     if(el.id==='searchInput'){state.search=el.value;render();}
     if(el.id==='pickerSearch')$$('.picker-track',modal).forEach(row=>{row.hidden=!row.dataset.search.includes(el.value.toLowerCase().trim());});
     if(el.id==='volumeInput'){audio.volume=Number(el.value);audio.muted=false;el.style.setProperty('--pct',`${audio.volume*100}%`);saveSession();}
-    if(el.matches('[data-seek]')){const value=Number(el.value);if(Number.isFinite(audio.duration)){audio.currentTime=Math.min(value,audio.duration);updateProgress();saveSession();}}
+    if(el.matches('[data-seek]'))context.playback.seekTo(Number(el.value));
   });
   document.addEventListener('change',event=>{if(event.target.dataset.eq)context.enhancements.saveSettings();});
   document.addEventListener('keydown',event=>{
@@ -277,8 +277,8 @@ export function createInterface(context) {
     if(modal.open||['INPUT','TEXTAREA','SELECT'].includes(event.target.tagName)||event.target.isContentEditable||event.altKey||event.ctrlKey||event.metaKey)return;
     if(event.key===' '&&event.target.closest('button,a'))return;
     if(event.key===' '){event.preventDefault();togglePlay();}
-    if(event.key==='ArrowRight'){event.preventDefault();if(event.shiftKey)nextTrack();else if(Number.isFinite(audio.duration))audio.currentTime=Math.min(audio.duration,audio.currentTime+5);}
-    if(event.key==='ArrowLeft'){event.preventDefault();if(event.shiftKey)previousTrack();else if(audio.src)audio.currentTime=Math.max(0,audio.currentTime-5);}
+    if(event.key==='ArrowRight'){event.preventDefault();if(event.shiftKey)nextTrack();else context.playback.seekTo(audio.currentTime+5);}
+    if(event.key==='ArrowLeft'){event.preventDefault();if(event.shiftKey)previousTrack();else context.playback.seekTo(audio.currentTime-5);}
     if(event.key.toLowerCase()==='s')toggleShuffle();
     if(event.key.toLowerCase()==='l')toggleLike(state.queue.current).catch(report);
     if(event.key==='/'){event.preventDefault();document.body.classList.add('search-visible');$('#searchInput').focus();}

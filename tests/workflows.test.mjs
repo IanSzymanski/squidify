@@ -121,7 +121,7 @@ test('playback reports retain background events locally with bounded history and
   await app.mediaActions.play();app.setHidden(true);app.emitDocument('visibilitychange',{});audio.pause();
   app.setHidden(false);app.emitDocument('visibilitychange',{});app.actions['playback-report']();await app.actions['copy-playback-report']();
   const report=JSON.parse(copied);assert.ok(report.events.some(x=>x.event==='hidden'));assert.ok(report.events.some(x=>x.event==='pause'&&x.hidden));
-  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v24');
+  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v25');
   for(let i=0;i<100;i++)audio.emit('stalled');await app.actions['copy-playback-report']();assert.equal(JSON.parse(copied).events.length,80);
   const reopened=await mediaFixture(t,{localStorage,clipboard:{writeText:async value=>{copied=value;}}});await reopened.actions['copy-playback-report']();
   assert.ok(JSON.parse(copied).events.some(x=>x.event==='stalled'));assert.ok(values.size);
@@ -149,9 +149,126 @@ test('completed iOS playlists use prepared samples when fresh background loads s
       await app.mediaActions[control]();
       assert.ok(audio.readyState>=3,'restart must not enter the reported HAVE_METADATA stall');
       assert.equal(audio.paused,false);assert.equal(app.mediaSession.playbackState,'playing');assert.equal(app.state.queue.current,'a');
-      assert.equal(audio.currentTime,0);assert.equal(app.positions.at(-1).duration,audio.duration);assert.equal(app.state.tracks.get('a').duration,audio.duration);
+      assert.equal(audio.currentTime,0);assert.equal(app.positions.at(-1),undefined);
+      audio.currentTime=.2;audio.emit('timeupdate');assert.equal(app.positions.at(-1).duration,audio.duration);assert.equal(app.state.tracks.get('a').duration,audio.duration);
     }
     assert.equal(app.nativeAudios.length,2,'restarts reuse a bounded pair of native players');
+  }
+});
+test('completion survives WebKit revising duration and clearing ended before Play or Next',async t=>{
+  for(const control of ['play','nexttrack']){
+    const app=await mediaFixture(t,{isIOS:true,stallFreshLoadsWhenHidden:true}),audio=app.audio;
+    app.state.queue.index=2;await app.playback.loadTrack('c',true);await settlePlayback();app.setHidden(true);
+    audio.currentTime=audio.duration;audio.ended=true;audio.paused=true;audio.emit('pause');audio.emit('ended');
+    audio.duration+=2.3;audio.ended=false;audio.emit('durationchange');
+    await app.mediaActions[control]();
+    assert.equal(app.state.queue.current,'a','a recorded completion, not the mutable ended property, starts the next pass');
+    assert.ok(audio.readyState>=3,'Next must still activate the prepared restart');
+    assert.equal(audio.currentTime,0);assert.equal(audio.paused,false);
+  }
+});
+test('a prepared restart does not seek unnecessarily and proves clock movement before publishing position',async t=>{
+  const app=await mediaFixture(t,{isIOS:true,manualTimers:true}),audio=app.audio;
+  app.state.queue.index=2;await app.playback.loadTrack('c',true);await settlePlayback();app.setHidden(true);
+  audio.currentTime=audio.duration;audio.ended=true;audio.paused=true;audio.emit('ended');
+  const standby=app.nativeAudios[1];let seeks=0;
+  Object.defineProperty(standby,'currentTime',{get(){return this._time;},set(value){seeks++;this._time=value;}});
+  await app.mediaActions.play();assert.equal(seeks,0,'preloaded audio is already at zero');
+  assert.equal(app.positions.at(-1),undefined,'playing alone cannot prove a completed-source restart advanced');
+  audio.currentTime=.4;audio.emit('timeupdate');
+  assert.equal(app.positions.at(-1).position,.4);
+  const selections=audio.sourceSelections;app.runTimers(2500);
+  assert.equal(audio.sourceSelections,selections,'a progressing restart is never reloaded');
+});
+test('false playing at zero triggers only one same-source restart recovery',async t=>{
+  const app=await mediaFixture(t,{isIOS:true,manualTimers:true}),audio=app.audio;
+  app.state.queue.index=2;await app.playback.loadTrack('c',true);await settlePlayback();app.setHidden(true);
+  audio.currentTime=audio.duration;audio.ended=true;audio.paused=true;audio.emit('ended');await app.mediaActions.play();
+  const source=audio.src,selections=audio.sourceSelections;
+  app.runTimers(2500);await settlePlayback();
+  assert.equal(audio.src,source);assert.equal(app.state.queue.current,'a');assert.equal(audio.sourceSelections,selections+1);
+  assert.equal(audio.paused,false);assert.equal(app.mediaSession.metadata.title,'Song a');
+  app.runTimers(2500);app.runTimers(8000);await settlePlayback();
+  assert.equal(audio.sourceSelections,selections+1,'no retry loop');
+  assert.equal(audio.paused,true,'an exhausted frozen restart must not pretend to play forever');
+});
+test('restart recovery is cancelled by user transport, source changes and interruption',async t=>{
+  for(const action of ['pause','seekto','app-seek','native-pause','nexttrack','unload','interruption']){
+    let stateChange;const audioSession={type:'playback',state:'active',addEventListener:(name,fn)=>{stateChange=fn;}};
+    const app=await mediaFixture(t,{isIOS:true,manualTimers:true,audioSession}),audio=app.audio;
+    app.state.queue.index=2;await app.playback.loadTrack('c',true);await settlePlayback();app.setHidden(true);
+    audio.currentTime=audio.duration;audio.ended=true;audio.paused=true;audio.emit('ended');await app.mediaActions.play();
+    if(action==='seekto')app.mediaActions.seekto({seekTime:25});
+    else if(action==='app-seek')app.emitDocument('input',{target:{dataset:{},value:'25',matches:selector=>selector==='[data-seek]'}});
+    else if(action==='native-pause')audio.pause();
+    else if(action==='unload')await app.actions['remove-track']({dataset:{id:app.state.queue.current}});
+    else if(action==='interruption'){audioSession.state='interrupted';stateChange();}
+    else await app.mediaActions[action]();
+    const selections=audio.sourceSelections,calls=audio.playCalls.length;
+    app.runTimers(2500);app.runTimers(8000);await settlePlayback();
+    assert.equal(audio.sourceSelections,selections,action);assert.equal(audio.playCalls.length,calls,action);
+  }
+});
+test('recovery confirms real movement and preserves the current source and playback preferences',async t=>{
+  let copied;const app=await mediaFixture(t,{isIOS:true,manualTimers:true,clipboard:{writeText:async value=>{copied=value;}}}),audio=app.audio;
+  app.state.queue.index=2;await app.playback.loadTrack('c',true);await settlePlayback();app.setHidden(true);
+  audio.volume=.65;audio.playbackRate=1.2;audio.currentTime=audio.duration;audio.ended=true;audio.paused=true;audio.emit('ended');await app.mediaActions.nexttrack();
+  app.runTimers(2500);audio.currentTime=.7;audio.emit('timeupdate');const selections=audio.sourceSelections;
+  app.runTimers(2500);app.runTimers(8000);
+  assert.equal(audio.sourceSelections,selections);assert.equal(audio.paused,false);assert.equal(audio.volume,.65);assert.equal(audio.playbackRate,1.2);
+  assert.equal(app.positions.at(-1).position,.7);await app.actions['copy-playback-report']();
+  assert.ok(JSON.parse(copied).events.some(e=>e.event==='restart-progress'&&e.recovered));
+});
+test('buffering or a late background timer does not trigger a restart reload',async t=>{
+  for(const mode of ['buffering','late','seeking']){
+    const app=await mediaFixture(t,{isIOS:true,manualTimers:true}),audio=app.audio;
+    app.state.queue.index=2;await app.playback.loadTrack('c',true);await settlePlayback();app.setHidden(true);
+    audio.currentTime=audio.duration;audio.ended=true;audio.paused=true;audio.emit('ended');await app.mediaActions.play();
+    if(mode==='buffering'){audio.readyState=1;audio.emit('waiting');}
+    if(mode==='late')app.elapse(15000);
+    if(mode==='seeking')audio.seeking=true;
+    const selections=audio.sourceSelections;app.runTimers(2500);app.runTimers(8000);
+    assert.equal(audio.sourceSelections,selections,mode);assert.equal(audio.paused,false,mode);
+  }
+});
+test('seeking after completion clears the completion latch and resumes the selected final song',async t=>{
+  const app=await mediaFixture(t,{isIOS:true}),audio=app.audio;
+  app.state.queue.index=2;await app.playback.loadTrack('c',true);await settlePlayback();
+  audio.currentTime=audio.duration;audio.ended=true;audio.paused=true;audio.emit('ended');
+  app.emitDocument('input',{target:{dataset:{},value:'25',matches:selector=>selector==='[data-seek]'}});
+  await app.mediaActions.play();assert.equal(app.state.queue.current,'c');assert.equal(audio.currentTime,25);assert.equal(audio.paused,false);
+});
+test('a seek cancels recovery without leaving verified playback progress disabled',async t=>{
+  const app=await mediaFixture(t,{isIOS:true,manualTimers:true}),audio=app.audio;
+  app.state.queue.index=2;await app.playback.loadTrack('c',true);await settlePlayback();app.setHidden(true);
+  audio.currentTime=audio.duration;audio.ended=true;audio.paused=true;audio.emit('ended');await app.mediaActions.play();
+  app.mediaActions.seekto({seekTime:25});audio.emit('timeupdate');
+  assert.equal(app.positions.at(-1),undefined,'the seek is not evidence of audio progress');
+  audio.currentTime=25.4;audio.emit('timeupdate');
+  assert.equal(app.positions.at(-1).position,25.4,'real advancement re-enables lock-screen position');
+  const selections=audio.sourceSelections;app.runTimers(2500);assert.equal(audio.sourceSelections,selections);
+});
+test('late clock movement is recognized after a delayed recovery timer has been discarded',async t=>{
+  const app=await mediaFixture(t,{isIOS:true,manualTimers:true}),audio=app.audio;
+  app.state.queue.index=2;await app.playback.loadTrack('c',true);await settlePlayback();app.setHidden(true);
+  audio.currentTime=audio.duration;audio.ended=true;audio.paused=true;audio.emit('ended');await app.mediaActions.play();
+  app.elapse(15000);const selections=audio.sourceSelections;app.runTimers(2500);
+  audio.currentTime=.5;audio.emit('timeupdate');assert.equal(app.positions.at(-1).position,.5);
+  assert.equal(audio.sourceSelections,selections);
+});
+test('a rejected recovery stops cleanly and an obsolete rejection cannot pause a new song',async t=>{
+  for(const changeTrack of [false,true]){
+    let copied,reject;
+    const app=await mediaFixture(t,{isIOS:true,manualTimers:true,clipboard:{writeText:async value=>{copied=value;}}}),audio=app.audio;
+    app.state.queue.index=2;await app.playback.loadTrack('c',true);await settlePlayback();app.setHidden(true);
+    audio.currentTime=audio.duration;audio.ended=true;audio.paused=true;audio.emit('ended');await app.mediaActions.play();
+    const play=audio.play;audio.play=()=>new Promise((resolve,fail)=>{reject=fail;});
+    app.runTimers(2500);audio.play=play;
+    if(changeTrack)await app.mediaActions.nexttrack();
+    reject(Object.assign(new Error('native rejection'),{name:'NotAllowedError'}));await settlePlayback();
+    assert.equal(audio.paused,!changeTrack);assert.equal(app.mediaSession.playbackState,changeTrack?'playing':'paused');
+    assert.equal(app.state.queue.current,changeTrack?'b':'a');
+    if(!changeTrack){await app.actions['copy-playback-report']();assert.ok(JSON.parse(copied).events.some(e=>e.event==='restart-rejected'));}
   }
 });
 test('iOS skips before completion keep the existing player and inactive events cannot control a restarted queue',async t=>{
@@ -418,6 +535,7 @@ test('missing or partially unsupported Media Session leaves playback and other h
 });
 async function harness(t,db=memoryStore(),mediaOptions={}){
   const elements=new Map(),events={},timers=new Set(),waveCanvases=[],outputControls=[new Element()];
+  const manualTimers=new Map();let timerId=0,clock=Date.now();
   const nativeAudios=[];
   const makeAudio=()=>{const el=new FakeAudio();if(nativeAudios.length&&mediaOptions.standbyDuration)el.nextDuration=mediaOptions.standbyDuration;nativeAudios.push(el);el.blockFreshLoad=()=>mediaOptions.stallFreshLoadsWhenHidden&&document.hidden&&!nativeAudios.some(a=>!a.paused&&!a.ended);return el;};
   const element=s=>{if(!elements.has(s)){const el=s==='#audio'?makeAudio():new Element();if(s==='#audio'){if(mediaOptions.sinkId!==undefined)el.sinkId=mediaOptions.sinkId;el.nativeOutput=mediaOptions.nativeOutput;}if(['#queuePanel','#toast','#importBanner'].includes(s))el.hidden=true;elements.set(s,el);}return elements.get(s);};
@@ -434,6 +552,7 @@ async function harness(t,db=memoryStore(),mediaOptions={}){
   if(mediaOptions.stateThrows)Object.defineProperty(mediaSession,'playbackState',{set(){throw new Error('Unsupported state');}});
   const context=vm.createContext({document,window,navigator,location,localStorage:mediaOptions.localStorage,URL,Blob,File,TextEncoder,DataView,Uint8Array,ArrayBuffer,crypto:{subtle:webcrypto.subtle,randomUUID},Audio:FakeAudio,MediaMetadata:class{constructor(value){Object.assign(this,value);}},AbortController,FormData,matchMedia:()=>({matches:false}),console:{error(){}},setTimeout:(f,ms)=>{const timer=setTimeout(f,ms);timers.add(timer);return timer;},clearTimeout:id=>{clearTimeout(id);timers.delete(id);}});
   if(mediaOptions.random)context.Math=Object.assign(Object.create(Math),{random:mediaOptions.random});
+  if(mediaOptions.manualTimers){context.setTimeout=(fn,ms)=>{const id=++timerId;manualTimers.set(id,{fn,ms});return id;};context.clearTimeout=id=>manualTimers.delete(id);context.Date=class extends Date{static now(){return clock;}};}
   // Evaluate the real ES module graph in an isolated browser-like context.
   // Only IndexedDB is replaced; module imports/exports are not stripped.
   const modules=new Map();
@@ -448,7 +567,7 @@ async function harness(t,db=memoryStore(),mediaOptions={}){
   await entry.evaluate();await entry.namespace.ready;
   const {context:app,actions:appActions}=entry.namespace;
   t.after(()=>{for(const timer of timers)clearTimeout(timer);});
-  return {audio:app.audio,nativeAudios,setHidden:value=>{document.hidden=value;},outputControls,waveCanvases,enhancements:app.enhancements,ui:app.ui,offline:app.offline,state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,saveTrackDetails:app.playlists.saveTrackDetails,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,mediaSession,registrations,positions,playback:app.playback,emitDocument:(name,event)=>events['doc:'+name]?.forEach(fn=>fn(event)),emitWindow:name=>events[name]?.()};
+  return {elapse:ms=>{clock+=ms;},runTimers:ms=>{for(const [id,timer]of [...manualTimers])if(timer.ms===ms){manualTimers.delete(id);timer.fn();}},audio:app.audio,nativeAudios,setHidden:value=>{document.hidden=value;},outputControls,waveCanvases,enhancements:app.enhancements,ui:app.ui,offline:app.offline,state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,saveTrackDetails:app.playlists.saveTrackDetails,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,mediaSession,registrations,positions,playback:app.playback,emitDocument:(name,event)=>events['doc:'+name]?.forEach(fn=>fn(event)),emitWindow:name=>events[name]?.()};
 }
 test('empty library starts with working folder and file input alternatives',async t=>{
   const app=await harness(t);assert.match(app.element('#main').innerHTML,/Your music belongs here/);
@@ -578,16 +697,16 @@ test('installed-update toast is shown once, only for the running ready release',
   await app.offline.announceInstalled('squidify-shell-v5',true);
   assert.equal(app.element('#toast').hidden,true);
   assert.equal(app.db.stores.settings.has('installedShellVersion'),false);
-  await Promise.all([app.offline.announceInstalled('squidify-shell-v24',true),app.offline.announceInstalled('squidify-shell-v24',true)]);
+  await Promise.all([app.offline.announceInstalled('squidify-shell-v25',true),app.offline.announceInstalled('squidify-shell-v25',true)]);
   assert.match(app.element('#toast').textContent,/Squidify updated/);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v24');
-  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v24',true);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v25');
+  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v25',true);
   assert.equal(reopened.element('#toast').hidden,true);
 });
 test('a first install records its release without claiming an update',async t=>{
-  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v24',false);
+  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v25',false);
   assert.equal(app.element('#toast').hidden,true);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v24');
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v25');
 });
 
 

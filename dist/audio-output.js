@@ -42,7 +42,7 @@ export function createAudioOutput(primary,createStandby) {
       const previous=active;
       standby.volume=previous.volume;standby.muted=previous.muted;standby.playbackRate=previous.playbackRate;
       active=standby;standby=previous;preparedSource=null;
-      previous.pause(); // Its pending events are now inactive and ignored.
+      if(!previous.paused)previous.pause(); // Pending inactive events are ignored.
       return true;
     },
     clearRestart(){

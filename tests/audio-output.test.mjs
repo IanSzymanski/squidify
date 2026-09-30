@@ -32,3 +32,9 @@ test('clearing a prepared restart releases only the inactive element',async()=>{
   await audio.play();audio.addEventListener('emptied',()=>emptied++);audio.prepareRestart('blob:first');audio.clearRestart();
   assert.equal(first.paused,false);assert.equal(second.src,'');assert.equal(emptied,0);assert.equal(audio.restartReadyState,0);
 });
+test('activating a prepared player does not send another pause to an already finished player',()=>{
+  const first=new Player(),second=new Player(),audio=createAudioOutput(first,()=>second);let pauses=0;
+  first.addEventListener('pause',()=>pauses++);
+  audio.prepareRestart('blob:first');second.currentSrc=second.src;second.readyState=4;
+  assert.equal(audio.activateRestart('blob:first'),true);assert.equal(pauses,0);
+});
