@@ -47,7 +47,7 @@ export function createPlayerMotion(dialog){
     return values ? values[values.length===16?13:5]||0 : 0;
   }
   function open(render){
-    stop();closing=false;dialog.classList?.remove('player-closing');dialog.style.removeProperty('transform');dialog.style.setProperty('--player-dim','1');const token=version;render();if(!dialog.open)dialog.showModal();
+    stop();closing=false;dialog.classList?.remove('player-closing');dialog.style.removeProperty('transform');dialog.style.setProperty('--player-dim','1');const token=version;render();if(!dialog.open)dialog.showModal();dialog.setAttribute?.('tabindex','-1');dialog.focus?.({preventScroll:true});
     dialog.style.removeProperty('translate');
     if(reduce()||!dialog.animate)return;
     animation=dialog.animate([

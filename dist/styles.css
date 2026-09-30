@@ -141,3 +141,31 @@ main{flex:1;min-height:0;overflow-y:auto;overscroll-behavior-y:contain;-webkit-o
  #nowDialog.player-closing::backdrop{animation:player-dim-out .36s cubic-bezier(.2,.7,.3,1) both}
  @keyframes player-dim-out{from{opacity:var(--player-exit-dim,1)}to{opacity:0}}
 }
+
+/* One continuous music surface: the wave grows above the bar. */
+#player>.audio-wave{position:absolute;left:0;bottom:100%;width:100%;height:54px;max-width:none;pointer-events:none;opacity:1}
+#nowDialog>.full-wave{position:absolute;left:0;bottom:0;width:100%;height:85px;max-width:none;pointer-events:none;opacity:1}
+#nowDialog{padding-bottom:calc(95px + env(safe-area-inset-bottom))}
+#player .output-control{display:inline-flex;flex:0 0 44px;width:44px;min-width:44px;height:44px;padding:10px}
+#player .output-control .icon{width:22px;height:22px}
+#modalTitle:focus{outline:none}
+.search-reveal{min-width:0}
+@media(max-width:700px){
+ .topbar{column-gap:8px;row-gap:0}
+ .search-reveal{display:grid;grid-template-rows:0fr;flex:0 0 100%;order:3;min-height:0;opacity:0;visibility:hidden;transform:translateY(-6px);transition:grid-template-rows .32s cubic-bezier(.2,.7,.2,1),opacity .24s ease,transform .32s ease,visibility 0s .32s}
+ .search-reveal .search-box{display:flex!important;min-height:0;overflow:hidden;width:100%;margin:0;padding-top:0;padding-bottom:0;border-top-width:0;border-bottom-width:0;animation:none;transition:padding .32s ease,border-width .32s ease}
+ body.search-visible .search-reveal{grid-template-rows:1fr;opacity:1;visibility:visible;transform:translateY(0);transition-delay:0s}
+ body.search-visible .search-reveal .search-box{padding-top:10px;padding-bottom:10px;border-top-width:1px;border-bottom-width:1px}
+ .now-track{flex:1;min-width:0}
+ #player .playback{flex:0 0 auto}
+ #player .playback-buttons{gap:4px}
+ #player .playback-buttons .output-control{display:inline-flex}
+ .now-dialog .full-art{max-width:min(100%,30dvh)}
+}
+@media(hover:none){
+ .icon-button:hover,.menu-item:hover{background:transparent;color:var(--muted)}
+ .button.quiet:hover{background:transparent}
+ .icon-button.active:hover,.like-button.liked:hover{color:var(--mint)}
+}
+@media(prefers-reduced-motion:reduce){.search-reveal,.search-reveal .search-box{transition:none!important}}
+#nowDialog:focus,.panel-head h2:focus{outline:none}

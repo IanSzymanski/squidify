@@ -145,16 +145,16 @@ test('installed-update toast is shown once, only for the running ready release',
   await app.offline.announceInstalled('squidify-shell-v5',true);
   assert.equal(app.element('#toast').hidden,true);
   assert.equal(app.db.stores.settings.has('installedShellVersion'),false);
-  await Promise.all([app.offline.announceInstalled('squidify-shell-v9',true),app.offline.announceInstalled('squidify-shell-v9',true)]);
+  await Promise.all([app.offline.announceInstalled('squidify-shell-v10',true),app.offline.announceInstalled('squidify-shell-v10',true)]);
   assert.match(app.element('#toast').textContent,/Squidify updated/);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v9');
-  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v9',true);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v10');
+  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v10',true);
   assert.equal(reopened.element('#toast').hidden,true);
 });
 test('a first install records its release without claiming an update',async t=>{
-  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v9',false);
+  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v10',false);
   assert.equal(app.element('#toast').hidden,true);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v9');
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v10');
 });
 
 
@@ -180,4 +180,18 @@ test('photo cover save persists and failed replacement retains the old cover',as
  app.db.fail(Object.assign(new Error('Full'),{name:'QuotaExceededError'}));
  await assert.rejects(app.enhancements.saveCover(new Blob(['second'],{type:'image/jpeg'})));
  assert.equal(await p.artwork.text(),'first');assert.equal(await app.db.stores.playlists.get(p.id).artwork.text(),'first');
+});
+
+test('Create Playlist click does not inherit navigation from body data-view; submit saves and closes',async t=>{
+ const app=await harness(t);app.actions['new-playlist']({dataset:{}});app.element('#playlistName').value='Created by form';
+ let prevented=false;
+ const body={dataset:{view:'library'}};
+ const submit={closest(selector){return selector==='[data-action],[data-view]'?body:null;}};
+ app.emitDocument('click',{target:submit,preventDefault(){prevented=true;}});
+ assert.equal(prevented,false,'submit must retain its native form action');
+ const form={id:'playlistForm',dataset:{}};
+ app.emitDocument('submit',{target:form,preventDefault(){prevented=true;}});
+ await new Promise(resolve=>setTimeout(resolve,10));
+ assert.equal(prevented,true);assert.equal(app.state.playlists.length,1);assert.equal(app.state.playlists[0].name,'Created by form');assert.equal(app.element('#modal').open,false);
+ const again=await harness(t,app.db);assert.equal(again.state.playlists[0].name,'Created by form');
 });

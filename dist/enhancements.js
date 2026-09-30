@@ -1,3 +1,4 @@
+import { icon } from './icons.js';
 import * as db from './storage.js';
 import { escapeHTML as esc } from './core.js';
 
@@ -58,19 +59,33 @@ export function createEnhancements(context) {
     }
     return {src:mediaArt.get(p.id),type:'image/png'};
   }
+  let selectedOutput=null;
+  const isHeadphones=label=>/headphones?|headsets?|earphones?|earbuds?|airpods|buds|WH-|WF-|QC[ -]?\d|QuietComfort/i.test(label||'');
+  function renderOutput(){
+    const headphones=isHeadphones(selectedOutput?.label),wireless=!!audio.webkitCurrentPlaybackTargetIsWireless;
+    const label=selectedOutput?.label || (wireless?'Wireless audio output':'Audio output — managed by your device');
+    $$('.output-control').forEach(b=>{b.innerHTML=icon(headphones?'headphones':'bluetooth');b.title=label;b.setAttribute('aria-label',label);b.classList.toggle('active',headphones||!!selectedOutput||wireless);});
+  }
+  async function refreshOutput(){
+    try{
+      if(!selectedOutput)return renderOutput();
+      const devices=await navigator.mediaDevices?.enumerateDevices?.();
+      selectedOutput=devices?.find(d=>d.kind==='audiooutput' && d.deviceId===audio.sinkId)||null;
+    }catch{selectedOutput=null;}
+    renderOutput();
+  }
   async function chooseOutput(){
     try{
       if(navigator.mediaDevices?.selectAudioOutput && audio.setSinkId){
-        const device=await navigator.mediaDevices.selectAudioOutput();await audio.setSinkId(device.deviceId);
-        $$('.output-control').forEach(b=>{b.title=device.label||'Selected audio output';b.setAttribute('aria-label',b.title);b.classList.add('active');});
+        const device=await navigator.mediaDevices.selectAudioOutput();await audio.setSinkId(device.deviceId);selectedOutput=device;renderOutput();
         context.ui.toast(`Audio output: ${device.label||'selected device'}.`);
       }else if(audio.webkitShowPlaybackTargetPicker){audio.webkitShowPlaybackTargetPicker();}
-      else context.ui.toast('Choose Bluetooth headphones or a speaker in your device’s audio controls. This browser does not report the active Bluetooth connection.');
+      else context.ui.toast('Choose headphones or a speaker in your device’s audio controls. This browser does not report the active Bluetooth connection.');
     }catch(error){if(error.name!=='NotAllowedError'&&error.name!=='AbortError')context.ui.toast('Could not change output. Use your device’s audio controls.',true);}
   }
-  audio.addEventListener('webkitcurrentplaybacktargetiswirelesschanged',()=>{
-    $$('.output-control').forEach(b=>{b.classList.toggle('active',!!audio.webkitCurrentPlaybackTargetIsWireless);b.setAttribute('aria-label',audio.webkitCurrentPlaybackTargetIsWireless?'Wireless audio output active':'Audio output — managed by your device');});
-  });
+  navigator.mediaDevices?.addEventListener?.('devicechange',refreshOutput);
+  audio.addEventListener('sinkchange',refreshOutput);
+  audio.addEventListener('webkitcurrentplaybacktargetiswirelesschanged',renderOutput);
   // Decode a bounded copy to sample its real waveform. Do not reroute the media
   // element through Web Audio: iOS background and lock-screen playback stay native.
   async function loadWave(id){
@@ -86,18 +101,33 @@ export function createEnhancements(context) {
       samples=result;sampleDuration=buffer.duration;drawWave();
     }catch{/* Decoding support can differ from playback. Keep a quiet baseline. */}
   }
+  const envelopes=new WeakMap();
   function drawWave(){
     if(frame && typeof cancelAnimationFrame==='function')cancelAnimationFrame(frame);frame=0;
     if(document.hidden)return;
-    const playing=!audio.paused&&!context.playback.isPriming();
+    const playing=!audio.paused&&!context.playback.isPriming(),reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let settling=false;
     $$('.audio-wave').forEach(canvas=>{
-      const ctx=canvas.getContext('2d');if(!ctx)return;const w=canvas.width,h=canvas.height;ctx.clearRect(0,0,w,h);ctx.fillStyle='#0eedb5';
+      const ctx=canvas.getContext('2d');if(!ctx)return;
+      const rect=canvas.getBoundingClientRect(),ratio=Math.min(2,window.devicePixelRatio||1),w=Math.max(1,rect.width),h=Math.max(1,rect.height);
+      if(canvas.width!==Math.round(w*ratio)||canvas.height!==Math.round(h*ratio)){canvas.width=Math.round(w*ratio);canvas.height=Math.round(h*ratio);}
+      ctx.setTransform(ratio,0,0,ratio,0,0);ctx.clearRect(0,0,w,h);
       canvas.setAttribute('aria-label',samples?'Audio waveform':'Audio waveform unavailable for this file');
-      for(let x=0;x<w;x+=5){const at=Math.floor((audio.currentTime+(x/w-.5)*.45)/Math.max(1,sampleDuration)*(samples?.length||0));const level=playing&&samples?samples[Math.max(0,Math.min(samples.length-1,at))]:0;const height=Math.max(2,(level||0)*(h-2));ctx.fillRect(x,(h-height)/2,2,height);}
+      let levels=envelopes.get(canvas);if(!levels){levels=Array(19).fill(0);envelopes.set(canvas,levels);}
+      const points=levels.map((level,i)=>{
+        const at=Math.floor((audio.currentTime+(i/18-.5)*1.8)/Math.max(1,sampleDuration)*(samples?.length||0));
+        const target=playing&&samples&&!reduced?(samples[Math.max(0,Math.min(samples.length-1,at))]||0)*Math.sin(Math.PI*i/18):0;
+        levels[i]=level+(target-level)*.12;if(levels[i]>.002)settling=true;
+        return {x:i/18*w,y:h-3-levels[i]*(h-12)};
+      });
+      const gradient=ctx.createLinearGradient(0,0,w,0);gradient.addColorStop(0,'#0eedb5');gradient.addColorStop(.5,'#63a4ef');gradient.addColorStop(1,'#ae00ff');
+      const curve=()=>{ctx.beginPath();ctx.moveTo(points[0].x,points[0].y);for(let i=0;i<points.length-1;i++){const a=points[i],b=points[i+1],mid=(a.x+b.x)/2;ctx.bezierCurveTo(mid,a.y,mid,b.y,b.x,b.y);}};
+      curve();ctx.lineTo(w,h);ctx.lineTo(0,h);ctx.closePath();ctx.fillStyle=gradient;ctx.globalAlpha=.2;ctx.fill();ctx.globalAlpha=1;
+      curve();ctx.strokeStyle=gradient;ctx.lineWidth=1.7;ctx.lineCap='round';ctx.shadowColor='#24dfb980';ctx.shadowBlur=9;ctx.shadowOffsetY=4;ctx.stroke();ctx.shadowBlur=0;ctx.shadowOffsetY=0;
     });
-    if(playing && typeof requestAnimationFrame==='function' && !matchMedia('(prefers-reduced-motion: reduce)').matches)frame=requestAnimationFrame(drawWave);
+    if((playing||settling) && typeof requestAnimationFrame==='function' && !reduced)frame=requestAnimationFrame(drawWave);
   }
   audio.addEventListener('play',drawWave);audio.addEventListener('pause',drawWave);audio.addEventListener('timeupdate',()=>{if(!frame)drawWave();});document.addEventListener('visibilitychange',drawWave);
   function importResults(){const report=state.importReport;if(!report)return;context.ui.setModal(context.ui.modalHead('Import results')+`<p>${esc(report.summary)}</p><ul class="import-results">${report.files.map(f=>`<li><strong>${esc(f.name)}</strong><span>${esc(f.reason)}</span></li>`).join('')}</ul>`);}
-  return {coverDialog,chooseCover,saveCover,playlistMediaArt,chooseOutput,loadWave,importResults};
+  return {coverDialog,chooseCover,saveCover,playlistMediaArt,chooseOutput,renderOutput,drawWave,loadWave,importResults};
 }

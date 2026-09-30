@@ -11,6 +11,15 @@ Mobile is the primary interaction target; desktop retains keyboard navigation, s
 - **Import feedback:** retain successfully committed audio; separate duplicate, unsupported, unreadable, timed-out and quota outcomes. Add music → Import results shows file-level details for the latest import in this session.
 - **Audio:** Media Session uses the active playlist cover, otherwise track art or the app icon. Waveforms are derived from decoded audio without routing playback through Web Audio; files over 40MB or 15 minutes, unsupported decoders and decode failures use a quiet baseline. Bluetooth/output controls use browser capabilities, never infer an active Bluetooth route from a paired-device list.
 
+## Mobile polish
+
+- The waveform is a continuous cubic Bézier contour with a mint-to-violet stroke, translucent gradient fill and restrained glow. Its amplitude eases in and out. It sits directly above the mini-player and at the bottom edge of the full player.
+- The mini-player uses an unsquashed 44px output button in place of Next. Headphone icons are green only when an exposed selected-output label identifies headphones; unknown routes retain the Bluetooth glyph. Full-player skip controls and skip gestures remain available.
+- All overflow menus use vertical dots. Dialogs initially focus a neutral heading or the dialog; keyboard focus indications remain available on interactive controls. Touch-only devices do not retain hover backgrounds.
+- Mobile search animates its height and opacity on both entry and exit, preserving Safari rebound protection.
+- Apple touch icons are provided both as explicit metadata and at conventional root paths, alongside the manifest icons and favicon fallback.
+- Click delegation matches explicit controls rather than arbitrary ancestors carrying `data-view`, so native form submissions work even when the body identifies the current view.
+
 ## Device verification remaining
 
 Physical iPhone Safari and Home Screen testing: whole-screen gestures, search scroll reveal, keyboard layout, toast placement, background playback, lock-screen art, and OS audio output chooser. Automated tests do not substitute for this coverage.
