@@ -358,3 +358,29 @@ play promises. Physical iPhone audibility remains a device acceptance check:
 confirm Settings v27, rapidly alternate Previous/Next and Pause/Play while locked,
 then stop pressing and verify audible playback with advancing time. Also verify
 Pause remains paused and natural playlist-end restart still works.
+
+## v28 playlist-pass history and lock-screen state
+
+The seven-song reproduction exposed a definite queue boundary: `next()` discarded
+the preceding pass and reset the index to zero. Keep up to ten previous passes,
+with forward traversal restoring the exact already-heard shuffle order. New
+explicit queue starts clear history; saved sessions preserve it, and deleted
+songs are pruned from both directions. The preceding pass's final file is cached
+so remote Previous can start synchronously across the boundary.
+
+The incorrect native Play icon while sound advances is a distinct device symptom.
+The paused standby element was unmuted during preload. Keep it muted until active,
+transfer user preferences at handoff, and republish active playback state after
+inactive loading events and active time updates. This is a targeted mitigation;
+it does not prove which native element iOS chose for its lock-screen UI. Reports
+now include anonymous history counts and standby mute/readiness state.
+
+Verification: all 116 simulated tests pass, including seven-song shuffled runs
+through multiple passes, backward/forward order, persisted history, bounded
+history, native handoffs and state reconciliation without extra play calls.
+Device acceptance remains open: start a fresh seven-song shuffle and immediately
+lock the phone; check Pause is shown during playback. Skip seven times, verify
+Pause again, then Previous (twice if more than three seconds have elapsed) should
+return to the preceding pass's last song. Also confirm natural playlist-end
+restart and explicit Pause remain functional. Capture the report if the native
+icon is still incorrect; no automated test here observes the physical lock screen.

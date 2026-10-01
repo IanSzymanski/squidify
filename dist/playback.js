@@ -107,7 +107,7 @@ export function createPlayback(context) {
       const item=await db.get('media',id);
       if(!item?.blob)throw new Error('This song is no longer saved on this device. Import the file again.');
       const url=URL.createObjectURL(item.blob);mediaURLs.set(id,url);
-      for(const [key,value] of mediaURLs){if(mediaURLs.size<=5)break;if(key!==id&&key!==activeId&&key!==state.queue.order[state.queue.index+1]&&key!==state.queue.order[state.queue.index-1]&&key!==state.queue.preparedPass?.order[0]){URL.revokeObjectURL(value);mediaURLs.delete(key);}}
+      for(const [key,value] of mediaURLs){if(mediaURLs.size<=5)break;if(key!==id&&key!==activeId&&key!==state.queue.order[state.queue.index+1]&&key!==state.queue.previousId&&key!==state.queue.preparedPass?.order[0]){URL.revokeObjectURL(value);mediaURLs.delete(key);}}
       return url;
     })();
     mediaPromises.set(id,promise);
@@ -116,7 +116,7 @@ export function createPlayback(context) {
   function prepareNeighbors() {
     const q=state.queue;
     const restartId=q.prepareNextPass(state.tracks)[0];
-    const ids=[q.order[q.index-1],q.order[q.index+1],restartId];
+    const ids=[q.previousId,q.order[q.index+1],restartId];
     for(const id of new Set(ids))if(id&&byId(id))mediaURL(id).catch(()=>{});
     if(audio.prepareRestart){
       if(!restartId){audio.clearRestart();return;}
@@ -196,7 +196,7 @@ export function createPlayback(context) {
     // External Play is idempotent, including while a source read is pending.
     if(playIntent&&!loadedTrack()){musicSession();updatePlaybackState();return;}
     if(activeId!==state.queue.current||!audio.src)return loadTrack(state.queue.current,true);
-    if(playIntent&&!audio.paused)return;
+    if(playIntent&&!audio.paused){updatePlaybackState();updatePositionState();return;}
     playIntent=true;const generation=playGeneration,serial=++requestSerial;
     if(context.isIOS)watchRestart(generation,mediaURLs.get(activeId));
     try{await requestAudioPlay();}catch(e){
@@ -308,6 +308,10 @@ export function createPlayback(context) {
 
   function bindEvents() {
   if(eventsBound)return;eventsBound=true;
+  audio.setStandbyObserver?.(()=>{
+    // Inactive native loading must never publish its paused state as ours.
+    updatePlaybackState();playbackReport.record('standby-state');
+  });
   function syncLifecycle(event){
     // Refresh the existing session without replaying, resetting, or taking
     // focus back from a phone call/another app after a genuine interruption.
@@ -324,7 +328,7 @@ export function createPlayback(context) {
   audio.addEventListener('waiting',()=>{if(!loadedTrack())return;if(restartCheck){restartCheck.playing=false;scheduleRestartCheck(restartCheck,8000);}playbackStarted=false;updatePlaybackState();updatePositionState();});
   audio.addEventListener('pause',()=>{if(priming||!audio.paused||!hasCurrentMetadata())return;cancelRestartCheck();requestSerial++;pendingPlay=null;playIntent=false;playbackStarted=false;renderPlayer();saveSession();updatePlaybackState();updatePositionState();});
   audio.addEventListener('ended',()=>{if(!priming&&hasCurrentMetadata()&&audio.ended){completedGeneration=playGeneration;cancelRestartCheck();nextTrack(false);}});
-  audio.addEventListener('timeupdate',()=>{if(!hasCurrentMetadata())return;restartAdvanced();observeProgress();updateProgress();updatePositionState();if(Date.now()-lastSavedAt>5000){lastSavedAt=Date.now();saveSession();}});
+  audio.addEventListener('timeupdate',()=>{if(!hasCurrentMetadata())return;restartAdvanced();observeProgress();updatePlaybackState();updateProgress();updatePositionState();if(Date.now()-lastSavedAt>5000){lastSavedAt=Date.now();saveSession();}});
   audio.addEventListener('loadedmetadata',refreshMetadata);
   for(const name of ['seeking','seeked','durationchange','ratechange'])audio.addEventListener(name,()=>{if(priming)return;if(name==='seeking'||name==='seeked')progressSample=audio.currentTime;updateProgress();updatePositionState();if(name==='seeked')saveSession();});
   audio.addEventListener('emptied',()=>{if(audio.readyState>=1)return;metadataReady=false;if(activeId)updatePositionState();else clearMediaSession();});
@@ -372,7 +376,7 @@ export function createPlayback(context) {
   'queue-jump':b=>{const i=Number(b.dataset.index);if(!Number.isInteger(i)||!byId(state.queue.order[i]))return;state.queue.index=i;loadTrack(state.queue.current,true);},
   'queue-remove':b=>{state.queue.removeAt(Number(b.dataset.index));prepareNeighbors();saveSession();renderQueue();},
   'queue-up':b=>{const i=Number(b.dataset.index),q=state.queue;if(i<=q.index+1||i>=q.order.length)return;[q.order[i-1],q.order[i]]=[q.order[i],q.order[i-1]];saveSession();renderQueue();},
-  'clear-queue':()=>{state.queue.order=state.queue.order.slice(0,state.queue.index+1);state.queue.source=[...new Set(state.queue.order)];prepareNeighbors();saveSession();renderQueue();},
+  'clear-queue':()=>{state.queue.clearFuturePasses();state.queue.order=state.queue.order.slice(0,state.queue.index+1);state.queue.source=[...new Set(state.queue.order)];prepareNeighbors();saveSession();renderQueue();},
   'remove-track':async b=>{const id=b.dataset.id;await db.deleteTrack(id);if(id===activeId||id===state.queue.current)unloadAudio();state.tracks.delete(id);state.playlists.forEach(p=>{p.trackIds=p.trackIds.filter(x=>x!==id);});state.queue.prune(new Set(state.tracks.keys()));prepareNeighbors();if(mediaURLs.has(id)){URL.revokeObjectURL(mediaURLs.get(id));mediaURLs.delete(id);}ui.releaseArtwork(id);modal.close();render();saveSession();toast('Song removed from this device.');}
   };
 

@@ -16,6 +16,7 @@ export function createPlaybackReport(context) {
         position:Number.isFinite(audio.currentTime)?Math.round(audio.currentTime*10)/10:null,
         duration:Number.isFinite(audio.duration)?Math.round(audio.duration*10)/10:null,
         queueIndex:state.queue.index,queueLength:state.queue.order.length,
+        pastPasses:state.queue.pastPasses.length,futurePasses:state.queue.futurePasses.length,hasPrevious:!!state.queue.previousId,standby:audio.standbyState??null,
         audioSessionType:session?.type??'unsupported',audioSessionState:session?.state??'unavailable',
         mediaState:navigator.mediaSession?.playbackState??'unsupported',mediaError:audio.error?.code??null,...detail});
       events=events.slice(-limit);

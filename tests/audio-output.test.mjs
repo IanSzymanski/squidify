@@ -38,3 +38,16 @@ test('activating a prepared player does not send another pause to an already fin
   audio.prepareRestart('blob:first');second.currentSrc=second.src;second.readyState=4;
   assert.equal(audio.activateRestart('blob:first'),true);assert.equal(pauses,0);
 });
+test('standby remains muted through repeated handoffs while user output preferences follow active playback',()=>{
+  const first=new Player(),second=new Player(),audio=createAudioOutput(first,()=>second);let changes=0;
+  audio.setStandbyObserver(()=>changes++);
+  for(let i=0;i<4;i++){
+    const inactive=i%2?first:second,old=i%2?second:first;
+    const expectedMute=i%2===1;audio.muted=expectedMute;audio.volume=.4;audio.playbackRate=1.1;
+    audio.prepareRestart('blob:pass'+i);assert.equal(inactive.muted,true);
+    inactive.currentSrc=inactive.src;inactive.readyState=4;inactive.dispatchEvent(new Event('loadedmetadata'));
+    assert.equal(audio.activateRestart(inactive.src),true);
+    assert.equal(old.muted,true);assert.equal(audio.muted,expectedMute);assert.equal(audio.volume,.4);assert.equal(audio.playbackRate,1.1);
+  }
+  assert.ok(changes>=4);
+});

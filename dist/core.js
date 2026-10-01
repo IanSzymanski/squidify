@@ -41,10 +41,16 @@ export class PlayQueue {
     this.context = saved.context || 'Your library';
     this.playlistId = saved.playlistId || null;
     this.viewKey = saved.viewKey || null;
+    // Keep completed passes separate from the editable upcoming queue.
+    const passes=value=>Array.isArray(value)?value.filter(p=>Array.isArray(p)&&p.length).slice(-10).map(p=>[...p]):[];
+    this.pastPasses=passes(saved.pastPasses);
+    this.futurePasses=passes(saved.futurePasses);
   }
   get current() { return this.order[this.index] || null; }
+  get previousId() { return this.order[this.index-1] || this.pastPasses.at(-1)?.at(-1) || null; }
+  clearFuturePasses() { this.futurePasses=[];this.preparedPass=null; }
   start(ids, startId, tracks, context = 'Your library') {
-    this.playlistId = null;this.viewKey=null;
+    this.playlistId = null;this.viewKey=null;this.pastPasses=[];this.clearFuturePasses();
     this.source = [...new Set(ids)];
     if (!this.source.length) { this.order = []; this.index = -1; return null; }
     const id = this.source.includes(startId) ? startId : this.source[0];
@@ -54,13 +60,14 @@ export class PlayQueue {
     return this.current;
   }
   setShuffle(enabled, tracks) {
-    this.shuffle = enabled;
+    this.shuffle = enabled;this.clearFuturePasses();
     if (this.index < 0) return;
     const past = this.order.slice(0, this.index + 1);
     const future = this.order.slice(this.index + 1);
     this.order = [...past, ...(enabled ? balancedShuffle(future, tracks, past.slice(-2)) : [...new Set([...this.source, ...future])].filter(id => future.includes(id)))];
   }
   prepareNextPass(tracks) {
+    if(this.futurePasses.length)return this.futurePasses.at(-1);
     // Reserve the exact next shuffle pass before a background restart needs
     // its first file. This is transient preparation, not saved queue state.
     const signature=JSON.stringify([this.source,this.shuffle,this.order.slice(-2)]);
@@ -72,8 +79,12 @@ export class PlayQueue {
     if (!manual && this.repeat === 'one' && this.current) return this.current;
     if (this.index + 1 < this.order.length) return this.order[++this.index];
     // A deliberate Next starts another pass even when automatic repeat is off.
-    if ((manual || this.repeat === 'all') && this.source.length) {
-      this.order = [...this.prepareNextPass(tracks)];this.preparedPass=null;
+    if ((this.futurePasses.length || manual || this.repeat === 'all') && this.source.length) {
+      const next=[...this.prepareNextPass(tracks)];
+      if(this.order.length)this.pastPasses.push([...this.order]);
+      this.pastPasses=this.pastPasses.slice(-10);
+      if(this.futurePasses.length)this.futurePasses.pop();
+      this.order = next;this.preparedPass=null;
       this.index = 0;
       return this.current;
     }
@@ -81,9 +92,14 @@ export class PlayQueue {
   }
   previous() {
     if (this.index > 0) this.index--;
+    else if(this.pastPasses.length){
+      this.futurePasses.push([...this.order]);this.futurePasses=this.futurePasses.slice(-10);
+      this.order=this.pastPasses.pop();this.index=this.order.length-1;this.preparedPass=null;
+    }
     return this.current;
   }
   add(id, next = false) {
+    this.clearFuturePasses();
     if (!this.source.includes(id)) this.source.push(id);
     const existing = this.order.indexOf(id, this.index + 1);
     if (existing >= 0) this.order.splice(existing, 1);
@@ -92,17 +108,20 @@ export class PlayQueue {
   }
   removeAt(index) {
     if (index <= this.index || index >= this.order.length) return;
+    this.clearFuturePasses();
     const [id] = this.order.splice(index, 1);
     this.source = this.source.filter(x => x !== id);
   }
   prune(valid) {
     const current = this.current;
+    for(const key of ['pastPasses','futurePasses'])this[key]=this[key].map(pass=>pass.filter(id=>valid.has(id))).filter(pass=>pass.length);
+    this.preparedPass=null;
     const before = this.order.slice(0, this.index).filter(id => valid.has(id)).length;
     this.source = this.source.filter(id => valid.has(id));
     this.order = this.order.filter(id => valid.has(id));
     this.index = current && valid.has(current) ? before : -1;
   }
-  toJSON() { return { source: this.source, order: this.order, index: this.index, shuffle: this.shuffle, repeat: this.repeat, context: this.context, playlistId: this.playlistId, viewKey:this.viewKey }; }
+  toJSON() { return { source: this.source, order: this.order, index: this.index, shuffle: this.shuffle, repeat: this.repeat, context: this.context, playlistId: this.playlistId, viewKey:this.viewKey, pastPasses:this.pastPasses, futurePasses:this.futurePasses }; }
 }
 
 export function formatTime(seconds) {

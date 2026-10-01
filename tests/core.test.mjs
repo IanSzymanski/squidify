@@ -68,3 +68,25 @@ test('display helpers handle missing duration and hostile local filenames',()=>{
   assert.equal(formatTime(NaN),'—');assert.equal(formatTime(125.7),'2:05');
   assert.equal(escapeHTML('<img src=x onerror="x">'), '&lt;img src=x onerror=&quot;x&quot;&gt;');
 });
+
+test('seven-song shuffle boundaries preserve exact Previous and forward history across multiple passes',()=>{
+  const queue=new PlayQueue({shuffle:true}),songs=ids.slice(0,7);queue.start(songs,'0',map);
+  const heard=[queue.current];
+  for(let i=0;i<21;i++)heard.push(queue.next(map,true));
+  assert.equal(queue.pastPasses.length,3);
+  for(let i=heard.length-2;i>=0;i--)assert.equal(queue.previous(),heard[i]);
+  assert.equal(queue.previous(),heard[0],'no invented history before initial start');
+  const restored=new PlayQueue(JSON.parse(JSON.stringify(queue.toJSON())));
+  for(let i=1;i<heard.length;i++)assert.equal(restored.next(map,true),heard[i],'forward navigation does not reshuffle heard passes');
+});
+test('pass history is bounded, removes deleted tracks and resets for an explicitly started queue',()=>{
+  const queue=new PlayQueue();queue.start(['0','1'],'0',map);
+  for(let i=0;i<60;i++)queue.next(map,true);
+  assert.equal(queue.pastPasses.length,10);
+  queue.previous();queue.prune(new Set(['0']));
+  assert.ok(queue.pastPasses.every(p=>p.every(id=>id==='0')));
+  assert.ok(queue.futurePasses.every(p=>p.every(id=>id==='0')));
+  queue.start(['2','3'],'2',map);
+  assert.equal(queue.previousId,null);assert.equal(queue.pastPasses.length,0);assert.equal(queue.futurePasses.length,0);
+  assert.equal(queue.previous(),'2');
+});
