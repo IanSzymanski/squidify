@@ -159,8 +159,6 @@ export function createEnhancements(context) {
       const rect=canvas.getBoundingClientRect(),ratio=Math.min(2,window.devicePixelRatio||1),w=rect.width,h=rect.height;
       if(w<2||h<2){ctx.clearRect(0,0,canvas.width,canvas.height);return;}
       const preview=canvas.classList?.contains('eq-preview-wave')||canvas.classList?.contains('eq-preview-mini');
-      const mini=!full&&!largePreview;
-      const shape=mini?{...equalizer,contrast:Math.min(8,equalizer.contrast*2.5),height:400,edgeFade:Math.min(equalizer.edgeFade,20)}:equalizer;
       const [motionStart,motionEnd]=equalizerMotionBounds(w,equalizer.activeWidth);
       if(canvas.width!==Math.round(w*ratio)||canvas.height!==Math.round(h*ratio)){canvas.width=Math.round(w*ratio);canvas.height=Math.round(h*ratio);}
       ctx.setTransform(ratio,0,0,ratio,0,0);ctx.clearRect(0,0,w,h);
@@ -168,7 +166,7 @@ export function createEnhancements(context) {
       let levels=envelopes.get(canvas);if(!levels){levels=Array(BAND_COUNT).fill(0);envelopes.set(canvas,levels);}
       levels.forEach((level,i)=>{
         const target=preview?(previewTargets?.[i]||0):playing&&samples&&!reduced?(samples[sampleIndex*BAND_COUNT+i]||0):0;
-        const shaped=mini?Math.pow(target,1/equalizer.sensitivity):Math.pow(target,3.2/equalizer.sensitivity);
+        const shaped=Math.pow(target,3.2/equalizer.sensitivity);
         levels[i]=preview&&(reduced||previewPaused)?shaped:followLevel(level,shaped,equalizer,elapsed);if(levels[i]>.002){if(!preview)settling=true;}else levels[i]=0;
 
       });
@@ -176,8 +174,7 @@ export function createEnhancements(context) {
       // Keep the preview's footprint fixed while showing the full 4× height
       // range; dragging a slider never moves that slider beneath the finger.
       const referenceHeight=full?70:largePreview?8+(h-8)/4:h;
-      const points=equalizerPoints(levels,w,h,motionStart,motionEnd,shape,referenceHeight);
-      if(mini){const baseline=h-3,room=Math.max(1,h-3-Math.max(1.5,equalizer.stroke/2));for(const point of points)point.y=baseline-Math.min(room,(baseline-point.y)*2.6*room/Math.max(1,h-8));}
+      const points=equalizerPoints(levels,w,h,motionStart,motionEnd,equalizer,referenceHeight);
       const tangents=equalizerTangents(points);
       const gradient=ctx.createLinearGradient(0,0,w,0);gradient.addColorStop(0,'#0eedb5');gradient.addColorStop(.5,'#63a4ef');gradient.addColorStop(1,'#ae00ff');
       const curve=()=>{ctx.beginPath();ctx.moveTo(points[0].x,points[0].y);for(let i=0;i<points.length-1;i++){const a=points[i],b=points[i+1],third=(b.x-a.x)/3;ctx.bezierCurveTo(a.x+third,a.y+tangents[i]*third,b.x-third,b.y-tangents[i+1]*third,b.x,b.y);}};

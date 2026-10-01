@@ -409,3 +409,8 @@ these ambient animations. The mini waveform has substantially higher sensitivity
 and contrast and uses nearly its full icon height; the full waveform retains
 its settings. Mini-player hairline matches the kicker purple.
 Physical iPhone appearance and touch verification remains pending.
+
+## v31 mini waveform revert
+
+Restored the mini waveform's pre-v30 sensitivity, contrast, edge fade and height
+response, including its settings preview. All other v30 changes remain intact.
