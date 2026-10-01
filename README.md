@@ -414,3 +414,9 @@ Physical iPhone appearance and touch verification remains pending.
 
 Restored the mini waveform's pre-v30 sensitivity, contrast, edge fade and height
 response, including its settings preview. All other v30 changes remain intact.
+
+## v32 search layering and player cleanup
+
+Search and its tab retract beneath a separate header-chrome layer. Both share
+the header's solid background and have no border. Removed the mini-player's
+purple top hairline.
