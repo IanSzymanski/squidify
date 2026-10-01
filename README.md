@@ -384,3 +384,15 @@ Pause again, then Previous (twice if more than three seconds have elapsed) shoul
 return to the preceding pass's last song. Also confirm natural playlist-end
 restart and explicit Pause remain functional. Capture the report if the native
 icon is still incorrect; no automated test here observes the physical lock screen.
+
+## v29 manual search drawer
+
+Search starts collapsed on mobile and desktop. The magnifying-glass tab hangs
+under the connection badge: tap to toggle, drag down to open, or drag up from
+the tab/search field to close. List scrolling no longer changes search visibility.
+The slash shortcut and playlist search button still open and focus the field;
+Escape closes it, and hidden controls are inert. Closing preserves the query;
+changing views clears it as before. Song action cells use clipping rather than
+text ellipsis, avoiding a stray truncation dot beside their three-dot button.
+
+Physical iPhone gesture and visual confirmation remains pending.

@@ -1,4 +1,4 @@
-import { createMotion, createSearchScroll, createPlayerMotion, measureTitleMarquees } from './motion.js';
+import { createMotion, createPlayerMotion, measureTitleMarquees } from './motion.js';
 import { bindGestures } from './gestures.js';
 import * as db from './storage.js';
 import { formatTime, formatBytes, escapeHTML as esc } from './core.js';
@@ -9,7 +9,7 @@ export function createInterface(context) {
   const { $, $$, main, audio, modal, nowDialog, fileInput, folderInput, state, isIOS, standalone, trackArray, byId, playlist, plural, totalDuration } = context;
   const playback = context.playback;
   const motion = createMotion(main);
-  const searchScroll=createSearchScroll(),playerMotion=createPlayerMotion(nowDialog);
+  const playerMotion=createPlayerMotion(nowDialog);
   let routeKey;
   let titleFrame=0;
   function refreshTitleMarquees(){
@@ -74,7 +74,7 @@ export function createInterface(context) {
     const nextKey=view+'/'+detail;
     const commit=()=>{
       state.view=view;state.detail=detail;state.search='';$('#searchInput').value='';
-      searchScroll.reset();document.body.dataset.view=view;document.body.classList.remove('search-visible');render();main.scrollTop=0;window.scrollTo({top:0});routeKey=nextKey;
+      setSearchVisible(false);document.body.dataset.view=view;render();main.scrollTop=0;window.scrollTo({top:0});routeKey=nextKey;
     };
     motion.change(commit);
   }
@@ -239,8 +239,50 @@ export function createInterface(context) {
     badge.innerHTML=icon(state.updateDownloading?'download':state.shellReady?'check':'download')+`<span>${state.updateDownloading?'Downloading…':state.shellReady?(navigator.onLine?'Offline ready':'Listening offline'):'Offline setup'}</span>`;
   }
 
+  function setSearchVisible(visible, focus=false) {
+    const panel=$('#searchPanel'),tab=$('#searchTab'),input=$('#searchInput');
+    if(!visible && panel.contains(document.activeElement)){input.blur();tab.focus({preventScroll:true});}
+    document.body.classList.toggle('search-visible',visible);
+    panel.inert=!visible;panel.setAttribute('aria-hidden',String(!visible));
+    tab.setAttribute('aria-expanded',String(visible));
+    tab.setAttribute('aria-label',visible?'Hide search':'Show search');
+    if(visible && focus)input.focus({preventScroll:true});
+  }
+  function bindSearchDrawer(){
+    const tab=$('#searchTab'),panel=$('#searchPanel'),bar=$('.topbar'),badge=$('#offlineBadge');
+    // Keep the hanging tab centered below the connection indicator at every width.
+    const align=()=>{const b=badge.getBoundingClientRect(),h=bar.getBoundingClientRect();tab.style.left=`${b.left-h.left+b.width/2-24}px`;};
+    if(typeof ResizeObserver!=='undefined'){const observer=new ResizeObserver(align);observer.observe(bar);observer.observe(badge);}
+    window.addEventListener('resize',align);align();
+    let drag=null,suppressUntil=0;
+    for(const surface of [tab,panel]){
+      surface.addEventListener('pointerdown',event=>{
+        if(event.isPrimary===false || event.button>0)return;
+        drag={id:event.pointerId,x:event.clientX,y:event.clientY,surface};
+      });
+      surface.addEventListener('pointermove',event=>{
+        if(!drag || drag.id!==event.pointerId)return;
+        const dx=event.clientX-drag.x,dy=event.clientY-drag.y;
+        if(Math.abs(dy)>8 && Math.abs(dy)>Math.abs(dx)*1.25)surface.setPointerCapture?.(event.pointerId);
+      });
+      surface.addEventListener('pointerup',event=>{
+        if(!drag || drag.id!==event.pointerId)return;
+        const dx=event.clientX-drag.x,dy=event.clientY-drag.y;drag=null;
+        if(Math.abs(dy)>=28 && Math.abs(dy)>Math.abs(dx)*1.25){
+          suppressUntil=Date.now()+700;
+          setSearchVisible(dy>0);
+        }
+      });
+      surface.addEventListener('pointercancel',()=>{drag=null;});
+      surface.addEventListener('click',event=>{
+        if(event.detail!==0 && Date.now()<suppressUntil){event.preventDefault();event.stopImmediatePropagation();}
+      },true);
+    }
+    panel.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();setSearchVisible(false);}});
+  }
+
   function bindEvents(actions) {
-  main.addEventListener('scroll',()=>{const action=searchScroll.update(main.scrollTop,state.view==='playlist');if(action==='hide'&&document.activeElement!==$('#searchInput'))document.body.classList.remove('search-visible');if(action==='show')document.body.classList.add('search-visible');},{passive:true});
+  bindSearchDrawer();
   bindGestures({ document, window, nowDialog, beginPlayerDrag:playerMotion.interrupt,
     run: (name,id) => {
       if(name==='gesture-previous')return playback.previousTrack(false);
@@ -281,7 +323,7 @@ export function createInterface(context) {
     if(event.key==='ArrowLeft'){event.preventDefault();if(event.shiftKey)previousTrack();else context.playback.seekTo(audio.currentTime-5);}
     if(event.key.toLowerCase()==='s')toggleShuffle();
     if(event.key.toLowerCase()==='l')toggleLike(state.queue.current).catch(report);
-    if(event.key==='/'){event.preventDefault();document.body.classList.add('search-visible');$('#searchInput').focus();}
+    if(event.key==='/'){event.preventDefault();setSearchVisible(true,true);}
   });
   window.addEventListener('hashchange',readRoute);
   window.addEventListener('online',renderOfflineBadge);window.addEventListener('offline',renderOfflineBadge);
@@ -298,7 +340,7 @@ export function createInterface(context) {
   'choose-files':()=>selectFiles(),
   'close-modal':()=>modal.close(),
   'close-now':()=>playerMotion.close(),
-  'search-toggle':()=>{document.body.classList.toggle('search-visible');if(document.body.classList.contains('search-visible'))$('#searchInput').focus();},
+  'search-toggle':()=>setSearchVisible(!document.body.classList.contains('search-visible'),true),
   'audio-output':()=>context.enhancements.chooseOutput(),
   'reset-equalizer':()=>context.enhancements.resetEqualizer(),
   'pause-equalizer-preview':b=>context.enhancements.pausePreview(b),

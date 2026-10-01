@@ -28,22 +28,6 @@ export function createMotion(main) {
   return {change,reveal};
 }
 
-// Clamp Safari's negative rubber-band scroll and require real downward travel
-// beyond the top zone before hiding a search field that just appeared.
-export function createSearchScroll(){
-  let last=0,down=0;
-  return {
-    reset(){last=0;down=0;},
-    update(raw,playlist=false){
-      const y=Math.max(0,raw),delta=y-last;last=y;
-      if(y<=48){down=0;return !playlist&&delta<0?'show':null;}
-      if(delta>0)down+=delta;else down=0;
-      if(down>=28){down=0;return 'hide';}
-      return null;
-    }
-  };
-}
-
 export function createPlayerMotion(dialog){
   let animation,version=0,closing=false;
   const reduce=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
