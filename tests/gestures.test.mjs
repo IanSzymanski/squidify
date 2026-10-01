@@ -40,7 +40,7 @@ test('mini-player opens upwards; whole full player closes downwards',t=>{
 });
 test('horizontal player swipes skip next/previous and consume the synthetic click',t=>{
   const f=fixture(t),player=f.target('player');
-  f.swipe(player,-100,10);f.swipe(f.target('full'),100,0);
+  f.swipe(player,-100,10);f.swipe(player,100,0);
   assert.deepEqual(f.calls,[['next'],['gesture-previous']]);
   const click=f.emit('click',player);assert.equal(click.prevented,true);assert.equal(click.stopped,true);
   assert.equal(f.emit('click',player).prevented,undefined,'following ordinary click works');
@@ -79,4 +79,10 @@ test('right-click and keyboard context-menu key open the same options',t=>{
   assert.equal(f.emit('keydown',song,0,0,{key:'F10',shiftKey:true}).prevented,true);
   assert.equal(f.menus.length,2);
   assert.equal(f.emit('click',song,0,0,{detail:0}).prevented,undefined,'keyboard clicks stay accessible');
+});
+
+test('full music screen ignores horizontal swipes without moving or skipping',t=>{
+ const f=fixture(t),full=f.target('full');f.swipe(full,-100,0);f.swipe(full,100,0);
+ assert.deepEqual(f.calls,[]);assert.equal(full.styles.has('transform'),false);
+ assert.equal(f.emit('click',full).prevented,undefined);
 });

@@ -115,13 +115,13 @@ export function createInterface(context) {
     return `<label class="sort-label">${icon('list')}<select id="sortSelect" aria-label="Sort songs">${[['added','Recently added'],['title','Title'],['artist','Artist'],['album','Album']].map(([v,l])=>`<option value="${v}" ${state.sort===v?'selected':''}>${l}</option>`).join('')}</select>${icon('down')}</label>`;
   }
   function trackRows(list) {
-    return `<div class="track-list"><table class="track-table"><thead><tr><th class="num">#</th><th class="title-col">Title</th><th class="album-col">Album</th><th class="like-col"><span class="sr-only">Liked</span></th><th class="duration-col" aria-label="Duration">${icon('clock')}</th><th class="more-col"><span class="sr-only">Actions</span></th></tr></thead><tbody>${list.map((t,i)=>`<tr data-track-row="${t.id}" class="${state.queue.current===t.id?'current':''}"><td class="number-cell"><button class="number-button" data-action="play-track" data-id="${t.id}" aria-label="Play ${esc(t.title)}">${state.queue.current===t.id?icon(!audio.paused?'pause':'play'):i+1}</button></td><td><button class="track-cell" data-action="play-track" data-id="${t.id}">${artwork(t)}<span class="track-text"><span class="song-title">${esc(t.title)}</span><span class="song-artist">${esc(t.artist)}</span></span></button></td><td class="album-cell"><button class="album-text" data-view="album" data-id="${esc(albumKey(t))}">${esc(t.album)}</button></td><td class="table-like"><button class="icon-button like-button ${t.liked?'liked':''}" data-action="like" data-id="${t.id}" aria-label="${t.liked?'Unlike':'Like'} ${esc(t.title)}" aria-pressed="${!!t.liked}">${icon('heart')}</button></td><td class="duration-cell" data-duration-id="${t.id}">${formatTime(t.duration)}</td><td><button class="icon-button" data-action="track-menu" data-id="${t.id}" aria-label="Actions for ${esc(t.title)}">${icon('vertical')}</button></td></tr>`).join('')}</tbody></table></div>`;
+    return `<div class="track-list"><table class="track-table"><thead><tr><th class="num">#</th><th class="title-col">Title</th><th class="album-col">Album</th><th class="like-col"><span class="sr-only">Liked</span></th><th class="duration-col" aria-label="Duration">${icon('clock')}</th><th class="more-col"><span class="sr-only">Actions</span></th></tr></thead><tbody>${list.map((t,i)=>`<tr data-track-row="${t.id}" class="${state.queue.current===t.id?'current':''}" style="--breathe-delay:-${(i*.65)%8}s"><td class="number-cell"><button class="number-button" data-action="play-track" data-id="${t.id}" aria-label="Play ${esc(t.title)}">${state.queue.current===t.id?icon(!audio.paused?'pause':'play'):i+1}</button></td><td><button class="track-cell" data-action="play-track" data-id="${t.id}">${artwork(t)}<span class="track-text"><span class="song-title">${esc(t.title)}</span><span class="song-artist">${esc(t.artist)}</span></span></button></td><td class="album-cell"><button class="album-text" data-view="album" data-id="${esc(albumKey(t))}">${esc(t.album)}</button></td><td class="table-like"><button class="icon-button like-button ${t.liked?'liked':''}" data-action="like" data-id="${t.id}" aria-label="${t.liked?'Unlike':'Like'} ${esc(t.title)}" aria-pressed="${!!t.liked}">${icon('heart')}</button></td><td class="duration-cell" data-duration-id="${t.id}">${formatTime(t.duration)}</td><td><button class="icon-button" data-action="track-menu" data-id="${t.id}" aria-label="Actions for ${esc(t.title)}">${icon('vertical')}</button></td></tr>`).join('')}</tbody></table></div>`;
   }
   function emptyLibrary() {
     return `<section class="empty-library"><div class="empty-icon">${icon('folder')}</div><h2>Your music belongs here.</h2><p>Connect a folder or choose audio files to start your library.</p><div class="actions-row"><button class="button primary" data-action="choose-folder">${icon('folder')}Choose a folder</button><button class="button" data-action="choose-files">${icon('plus')}Choose files</button></div><p class="empty-footer">${icon('shield')}Music stays on your device. No uploads. No account for your music.</p></section>`;
   }
   function playlistTiles() {
-    return state.playlists.map(p=>`<div class="playlist-tile" data-playlist-id="${esc(p.id)}"><button class="collection-card" data-view="playlist" data-id="${esc(p.id)}">${collectionArt(p)}<strong>${esc(p.name)}</strong><small>${plural(p.trackIds.length,'song')}</small></button><button class="icon-button tile-menu" data-action="playlist-menu" data-id="${esc(p.id)}" aria-label="Options for ${esc(p.name)}">${icon('vertical')}</button></div>`).join('');
+    return state.playlists.map((p,i)=>`<div style="--breathe-delay:-${(i*.9)%8}s" class="playlist-tile" data-playlist-id="${esc(p.id)}"><button class="collection-card" data-view="playlist" data-id="${esc(p.id)}">${collectionArt(p)}<strong>${esc(p.name)}</strong><small>${plural(p.trackIds.length,'song')}</small></button><button class="icon-button tile-menu" data-action="playlist-menu" data-id="${esc(p.id)}" aria-label="Options for ${esc(p.name)}">${icon('vertical')}</button></div>`).join('');
   }
   function positionMenu(anchor) {
     if (!anchor?.getBoundingClientRect) return;
@@ -243,6 +243,7 @@ export function createInterface(context) {
     const panel=$('#searchPanel'),tab=$('#searchTab'),input=$('#searchInput');
     if(!visible && panel.contains(document.activeElement)){input.blur();tab.focus({preventScroll:true});}
     document.body.classList.toggle('search-visible',visible);
+    if(visible){tab.classList.remove('scroll-hidden');tab.inert=false;}
     panel.inert=!visible;panel.setAttribute('aria-hidden',String(!visible));
     tab.setAttribute('aria-expanded',String(visible));
     tab.setAttribute('aria-label',visible?'Hide search':'Show search');
@@ -254,6 +255,15 @@ export function createInterface(context) {
     const align=()=>{const b=badge.getBoundingClientRect(),h=bar.getBoundingClientRect();tab.style.left=`${b.left-h.left+b.width/2-24}px`;};
     if(typeof ResizeObserver!=='undefined'){const observer=new ResizeObserver(align);observer.observe(bar);observer.observe(badge);}
     window.addEventListener('resize',align);align();
+    let lastY=0,travel=0;
+    main.addEventListener('scroll',()=>{
+      const y=Math.max(0,Math.min(main.scrollTop,Math.max(0,main.scrollHeight-main.clientHeight))),delta=y-lastY;lastY=y;
+      if(!delta)return;
+      travel=Math.sign(delta)===Math.sign(travel)?travel+delta:delta;
+      if(document.body.classList.contains('search-visible'))return;
+      if(y===0 || travel<=-16){tab.classList.remove('scroll-hidden');tab.inert=false;travel=0;}
+      else if(travel>=20 && document.activeElement!==tab){tab.classList.add('scroll-hidden');tab.inert=true;travel=0;}
+    },{passive:true});
     let drag=null,suppressUntil=0;
     for(const surface of [tab,panel]){
       surface.addEventListener('pointerdown',event=>{
@@ -283,6 +293,16 @@ export function createInterface(context) {
 
   function bindEvents(actions) {
   bindSearchDrawer();
+  let activeSeek=null;
+  const clearSeek=()=>{activeSeek?.classList.remove('seeking');activeSeek=null;};
+  document.addEventListener('pointerdown',event=>{
+    const input=event.target.closest('input[data-seek]');
+    if(input && !input.disabled){clearSeek();activeSeek=input;input.classList.add('seeking');}
+  });
+  document.addEventListener('pointerup',clearSeek);
+  document.addEventListener('pointercancel',clearSeek);
+  window.addEventListener('blur',clearSeek);
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)clearSeek();});
   bindGestures({ document, window, nowDialog, beginPlayerDrag:playerMotion.interrupt,
     run: (name,id) => {
       if(name==='gesture-previous')return playback.previousTrack(false);

@@ -396,3 +396,16 @@ changing views clears it as before. Song action cells use clipping rather than
 text ellipsis, avoiding a stray truncation dot beside their three-dot button.
 
 Physical iPhone gesture and visual confirmation remains pending.
+
+## v30 interaction and ambient motion
+
+The collapsed search tab hides after downward list travel and returns on upward
+travel; the open search drawer remains user-controlled. Full-screen horizontal
+swipes no longer skip tracks. Mini-player swipes and downward dismissal remain.
+Seek inputs and thumbs glow during pointer interaction and keyboard focus.
+Song and playlist artwork breathes with staggered eight-second cycles; the
+header squid closes its eyes once every eight seconds. Reduced motion disables
+these ambient animations. The mini waveform has substantially higher sensitivity
+and contrast and uses nearly its full icon height; the full waveform retains
+its settings. Mini-player hairline matches the kicker purple.
+Physical iPhone appearance and touch verification remains pending.

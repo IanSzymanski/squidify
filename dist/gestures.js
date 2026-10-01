@@ -45,6 +45,7 @@ export function bindGestures({ document, window, run, openMenu, nowDialog, begin
       if (Math.abs(g.dx) > Math.abs(g.dy) * 1.25) g.axis = 'x';
       else if (Math.abs(g.dy) > Math.abs(g.dx) * 1.25) g.axis = 'y';
       else return;
+      if(g.kind==='full' && g.axis==='x'){reset();return;}
       if(g.kind==='full')g.startY=beginPlayerDrag?.()||0;
     }
     if (g.axis === 'y' && g.kind === 'item') { reset(); return; }
@@ -71,7 +72,7 @@ export function bindGestures({ document, window, run, openMenu, nowDialog, begin
     let action;
     if (!g.held && g.axis === 'x' && Math.abs(g.dx) >= 64) {
       if (g.item) { if (g.dx > 0) action = ['add-queue', g.item.dataset.trackRow]; }
-      else action = [g.dx < 0 ? 'next' : 'gesture-previous'];
+      else if(g.kind==='player')action = [g.dx < 0 ? 'next' : 'gesture-previous'];
     } else if (!g.held && g.axis === 'y' && Math.abs(g.dy) >= 64) {
       if (g.kind === 'player' && g.dy < 0) action = ['now-playing'];
       if (g.kind === 'full' && g.dy > 0) action = ['close-now'];
