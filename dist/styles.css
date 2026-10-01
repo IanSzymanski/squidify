@@ -100,14 +100,18 @@ h1,h2,h3,.brand,.mobile-brand{font-family:'Bricolage Grotesque',system-ui,sans-s
 .import-results{padding:0;list-style:none;max-height:50dvh;overflow:auto}
 .import-results li{display:grid;gap:4px;padding:12px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
 .import-results span{color:var(--muted);font-size:14px}
+/* Only main scrolls. Pin the shell outside document flow so Safari cannot
+   create a second scrolling surface that moves the header and footer apart. */
 html,body{height:100%;overflow:hidden;overscroll-behavior:none}
-.app{height:100dvh;min-height:0;padding-bottom:var(--player)}
-.workspace{height:100%;min-height:0;display:flex;flex-direction:column}
+body{position:fixed;inset:0;width:100%}
+.app{position:fixed;inset:0 0 var(--player);height:auto;min-height:0;padding-bottom:0;overflow:hidden}
+.workspace{height:100%;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 .topbar{position:relative;flex-shrink:0;padding-top:env(safe-area-inset-top);height:calc(90px + env(safe-area-inset-top))}
 main{flex:1;min-height:0;overflow-y:auto;overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch}
+/* showModal() keeps the song sheet above all fixed bars in the top layer. */
+.now-dialog{position:fixed;overflow-x:hidden;overscroll-behavior:contain}
+@media(max-width:760px){.now-dialog{inset:0;margin:0;width:100%;max-width:100%;height:100dvh;max-height:100dvh}}
 @media(max-width:700px){
- .app{height:100dvh;padding-bottom:calc(134px + env(safe-area-inset-bottom))}
- .workspace{height:100%;min-height:0}
  .topbar{height:auto;min-height:calc(68px + env(safe-area-inset-top));padding:calc(10px + env(safe-area-inset-top)) 18px 10px;flex-wrap:wrap;gap:8px}
  .search-box{display:none;order:3;width:100%;margin:0}
  body.search-visible .search-box{display:flex}
