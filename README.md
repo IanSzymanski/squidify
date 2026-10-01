@@ -337,3 +337,24 @@ load failure fails against v23 and passes with the prepared restart, covering
 both Play and Next across repeated completions. Additional checks cover native
 event isolation, preference transfer, unavailable preparation, cleanup and
 offline module availability. User confirmation of v24 audibility is pending.
+
+## v27 transport durability
+
+Previous at the first queue entry reuses the current source and suppresses
+near-identical seeks instead of repeatedly calling native play. Transport request
+serials keep late promise failures from overriding newer Pause/Play commands;
+late native play events cannot undo explicit Pause. Cached track changes still
+start synchronously inside remote actions, preserving iOS background activation.
+
+On iOS, ordinary loads, resumes and seeks back to zero now receive the same
+clock-progress verification as completed-playlist restarts. Frozen playback gets
+one source reload after 2.5 seconds; metadata-only buffering gets eight seconds.
+Recovery preserves position and stops after one attempt. Pause, another source,
+interruption, an active seek or an excessively delayed timer prevents obsolete
+recovery. No audio-session category cycling or silent keep-alive is used.
+
+Verification: 111 simulated checks, including rapid mixed commands and pending
+play promises. Physical iPhone audibility remains a device acceptance check:
+confirm Settings v27, rapidly alternate Previous/Next and Pause/Play while locked,
+then stop pressing and verify audible playback with advancing time. Also verify
+Pause remains paused and natural playlist-end restart still works.

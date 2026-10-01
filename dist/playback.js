@@ -22,6 +22,7 @@ export function createPlayback(context) {
   let eventsBound = false, mediaSessionBound = false;
   let metadataReady = false, restorePosition = 0, playbackStarted = false;
   let completedGeneration = -1, restartCheck = null, progressSample = 0;
+  let requestSerial = 0, pendingPlay = null;
   const playbackReport=createPlaybackReport(context);
 
   function musicSession() {
@@ -34,7 +35,12 @@ export function createPlayback(context) {
   }
   function requestAudioPlay() {
     musicSession();updatePlaybackState();playbackReport.record('play-request');
-    return audio.play();
+    // Share a pending request only within the same source and transport intent.
+    if(pendingPlay?.generation===playGeneration&&pendingPlay.serial===requestSerial)return pendingPlay.promise;
+    const request={generation:playGeneration,serial:requestSerial};
+    const promise=audio.play();
+    request.promise=Promise.resolve(promise).finally(()=>{if(pendingPlay===request)pendingPlay=null;});
+    pendingPlay=request;return request.promise;
   }
 
   function sourceCompleted(){return completedGeneration===playGeneration||audio.ended;}
@@ -52,16 +58,19 @@ export function createPlayback(context) {
       if(check.generation!==playGeneration||!playIntent||audio.paused||audio.ended||audio.error||navigator.audioSession?.state==='interrupted'){cancelRestartCheck();return;}
       if(restartAdvanced())return;
       // A suspended page can deliver timers much later. Never reclaim audio
-      // on a stale timer, or treat ordinary buffering as a frozen clock.
-      if(Date.now()-check.scheduledAt>delay+5000||!check.playing||audio.readyState<3||audio.seeking||audio.playbackRate<=0){
+      // on a stale timer. Buffering gets a longer window than a frozen clock.
+      if(Date.now()-check.scheduledAt>delay+5000||audio.seeking||audio.playbackRate<=0){
         playbackReport.record('restart-unconfirmed');cancelRestartCheck();return;
       }
+      // Allow one retry after a full eight-second buffering window as well.
+      if((!check.playing||audio.readyState<3)&&delay<8000){scheduleRestartCheck(check,8000);return;}
       if(check.recovered){
         playbackReport.record('restart-stalled');cancelRestartCheck();pausePlayback();
         toast('Playback did not restart. Open Squidify and tap Play.',true);return;
       }
-      check.recovered=true;check.playing=false;check.position=0;
-      playbackReport.record('restart-reload');metadataReady=false;playbackStarted=false;restorePosition=0;updatePositionState();
+      check.recovered=true;check.playing=false;check.position=audio.currentTime||0;
+      requestSerial++;pendingPlay=null;
+      playbackReport.record('restart-reload');metadataReady=false;playbackStarted=false;restorePosition=check.position;updatePositionState();
       // v24's prepared player could emit playing but stay at zero. Re-select
       // its cached song once on the now-active native player, without changing
       // queue, media-session ownership, category, volume or output route.
@@ -127,7 +136,7 @@ export function createPlayback(context) {
     if(!byId(id))return;
     const sourceEnded=sourceCompleted();cancelRestartCheck();
     const wasPlaying=playbackStarted&&!audio.paused&&!audio.ended;
-    const generation=++playGeneration;playIntent=autoplay;
+    const generation=++playGeneration;const serial=++requestSerial;playIntent=autoplay;
     // Keep the native session alive while disk access finishes. Only its
     // position is cleared; ending the session here can suspend a locked page.
     metadataReady=false;playbackStarted=false;progressSample=restoreTime;updatePlaybackState();updatePositionState();playbackReport.record('load-track',{sourceCompleted:sourceEnded});
@@ -151,10 +160,10 @@ export function createPlayback(context) {
         // tears down the native player again during a lock-screen handoff.
         audio.src=url;
       }
-      if(autoplay&&sourceEnded&&context.isIOS)watchRestart(generation,url);
+      if(playIntent&&context.isIOS)watchRestart(generation,url);
       if(prepared)refreshMetadata();
       const started=playIntent?requestAudioPlay().catch(e=>{
-        if(generation===playGeneration&&e.name!=='AbortError'){
+        if(generation===playGeneration&&serial===requestSerial&&playIntent&&e.name!=='AbortError'){
           cancelRestartCheck();playIntent=false;playbackStarted=false;updatePlaybackState();updatePositionState();
           playbackReport.record('play-rejected',{error:e.name});
           toast(e.name==='NotAllowedError'?'Tap Play to start listening.':'This browser could not play this audio format. Try MP3 or AAC/M4A.',true);
@@ -187,9 +196,11 @@ export function createPlayback(context) {
     // External Play is idempotent, including while a source read is pending.
     if(playIntent&&!loadedTrack()){musicSession();updatePlaybackState();return;}
     if(activeId!==state.queue.current||!audio.src)return loadTrack(state.queue.current,true);
-    playIntent=true;const generation=playGeneration;
+    if(playIntent&&!audio.paused)return;
+    playIntent=true;const generation=playGeneration,serial=++requestSerial;
+    if(context.isIOS)watchRestart(generation,mediaURLs.get(activeId));
     try{await requestAudioPlay();}catch(e){
-      if(generation!==playGeneration||!playIntent||e.name==='AbortError')return;
+      if(generation!==playGeneration||serial!==requestSerial||!playIntent||e.name==='AbortError')return;
       playIntent=false;playbackStarted=false;updatePlaybackState();updatePositionState();playbackReport.record('play-rejected',{error:e.name});report(e,'Unable to play. Tap a song or try a different audio format.');
     }
   }
@@ -200,7 +211,12 @@ export function createPlayback(context) {
   }
   function previousTrack(restart=true) {
     if(restart&&hasCurrentMetadata()&&audio.currentTime>3){seekTo(0);return;}
-    const id=state.queue.previous();if(id){return loadTrack(id,true);}
+    const current=state.queue.current,id=state.queue.previous();
+    if(id===current&&hasCurrentMetadata()&&!sourceCompleted()){
+      // At the first song, repeated Previous is a seek, not a new load/play.
+      seekTo(0);if(!playIntent&&audio.paused)return resumePlayback();return;
+    }
+    if(id)return loadTrack(id,true);
   }
   function toggleShuffle() {
     state.queue.setShuffle(!state.queue.shuffle,state.tracks);prepareNeighbors();saveSession();renderPlayer();if(!$('#queuePanel').hidden)renderQueue();
@@ -256,17 +272,24 @@ export function createPlayback(context) {
   }
   function seekTo(time) {
     if(!hasCurrentMetadata()||!Number.isFinite(time)||!Number.isFinite(audio.duration)||audio.duration<=0)return;
+    const target=Math.min(audio.duration,Math.max(0,time));
+    // Coalesce repeated near-identical restarts without disturbing an active seek.
+    if(Math.abs(audio.currentTime-target)<.25&&!sourceCompleted())return;
     completedGeneration=-1;cancelRestartCheck();
-    audio.currentTime=Math.min(audio.duration,Math.max(0,time));
+    audio.currentTime=target;
+    if(playIntent&&context.isIOS&&target===0){
+      watchRestart(playGeneration,mediaURLs.get(activeId));
+      restartCheck.playing=audio.readyState>=3;scheduleRestartCheck(restartCheck,2500);
+    }
     progressSample=audio.currentTime;
     updateProgress();updatePositionState();saveSession();
   }
   function pausePlayback() {
-    cancelRestartCheck();playIntent=false;playbackStarted=false;audio.pause();updatePlaybackState();updatePositionState();saveSession();playbackReport.record('pause-request');
+    cancelRestartCheck();requestSerial++;pendingPlay=null;playIntent=false;playbackStarted=false;audio.pause();updatePlaybackState();updatePositionState();saveSession();playbackReport.record('pause-request');
   }
   function unloadAudio() {
     cancelRestartCheck();completedGeneration=-1;
-    playGeneration++;playIntent=false;priming=false;activeId=null;metadataReady=false;restorePosition=0;playbackStarted=false;
+    playGeneration++;requestSerial++;pendingPlay=null;playIntent=false;priming=false;activeId=null;metadataReady=false;restorePosition=0;playbackStarted=false;
     audio.pause();audio.removeAttribute('src');audio.load();audio.clearRestart?.();clearMediaSession();
   }
   function saveSession(immediate=false) {
@@ -293,14 +316,14 @@ export function createPlayback(context) {
   window.addEventListener('pagehide',()=>syncLifecycle('pagehide'));
   window.addEventListener('pageshow',()=>syncLifecycle('pageshow'));
   document.addEventListener('visibilitychange',()=>syncLifecycle(document.hidden?'hidden':'visible'));
-  audio.addEventListener('play',()=>{audioUnlocked=true;if(priming||audio.paused||!loadedTrack())return;playIntent=true;renderPlayer();updatePlaybackState();updatePositionState();});
+  audio.addEventListener('play',()=>{audioUnlocked=true;if(priming||audio.paused||!loadedTrack())return;if(!playIntent){audio.pause();return;}renderPlayer();updatePlaybackState();updatePositionState();});
   audio.addEventListener('playing',()=>{if(!hasCurrentMetadata()||audio.paused||audio.ended)return;
     if(restartCheck){if(!restartCheck.playing){restartCheck.playing=true;scheduleRestartCheck(restartCheck,2500);}}
     else playbackStarted=true;
     renderPlayer();updatePlaybackState();updatePositionState();});
-  audio.addEventListener('waiting',()=>{if(!loadedTrack())return;playbackStarted=false;updatePlaybackState();updatePositionState();});
-  audio.addEventListener('pause',()=>{if(priming||!audio.paused||!hasCurrentMetadata())return;cancelRestartCheck();playIntent=false;playbackStarted=false;renderPlayer();saveSession();updatePlaybackState();updatePositionState();});
-  audio.addEventListener('ended',()=>{if(!priming&&loadedTrack()){completedGeneration=playGeneration;cancelRestartCheck();nextTrack(false);}});
+  audio.addEventListener('waiting',()=>{if(!loadedTrack())return;if(restartCheck){restartCheck.playing=false;scheduleRestartCheck(restartCheck,8000);}playbackStarted=false;updatePlaybackState();updatePositionState();});
+  audio.addEventListener('pause',()=>{if(priming||!audio.paused||!hasCurrentMetadata())return;cancelRestartCheck();requestSerial++;pendingPlay=null;playIntent=false;playbackStarted=false;renderPlayer();saveSession();updatePlaybackState();updatePositionState();});
+  audio.addEventListener('ended',()=>{if(!priming&&hasCurrentMetadata()&&audio.ended){completedGeneration=playGeneration;cancelRestartCheck();nextTrack(false);}});
   audio.addEventListener('timeupdate',()=>{if(!hasCurrentMetadata())return;restartAdvanced();observeProgress();updateProgress();updatePositionState();if(Date.now()-lastSavedAt>5000){lastSavedAt=Date.now();saveSession();}});
   audio.addEventListener('loadedmetadata',refreshMetadata);
   for(const name of ['seeking','seeked','durationchange','ratechange'])audio.addEventListener(name,()=>{if(priming)return;if(name==='seeking'||name==='seeked')progressSample=audio.currentTime;updateProgress();updatePositionState();if(name==='seeked')saveSession();});

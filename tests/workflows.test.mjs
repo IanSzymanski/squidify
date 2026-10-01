@@ -121,7 +121,7 @@ test('playback reports retain background events locally with bounded history and
   await app.mediaActions.play();app.setHidden(true);app.emitDocument('visibilitychange',{});audio.pause();
   app.setHidden(false);app.emitDocument('visibilitychange',{});app.actions['playback-report']();await app.actions['copy-playback-report']();
   const report=JSON.parse(copied);assert.ok(report.events.some(x=>x.event==='hidden'));assert.ok(report.events.some(x=>x.event==='pause'&&x.hidden));
-  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v26');
+  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v27');
   for(let i=0;i<100;i++)audio.emit('stalled');await app.actions['copy-playback-report']();assert.equal(JSON.parse(copied).events.length,80);
   const reopened=await mediaFixture(t,{localStorage,clipboard:{writeText:async value=>{copied=value;}}});await reopened.actions['copy-playback-report']();
   assert.ok(JSON.parse(copied).events.some(x=>x.event==='stalled'));assert.ok(values.size);
@@ -204,6 +204,7 @@ test('restart recovery is cancelled by user transport, source changes and interr
     else if(action==='unload')await app.actions['remove-track']({dataset:{id:app.state.queue.current}});
     else if(action==='interruption'){audioSession.state='interrupted';stateChange();}
     else await app.mediaActions[action]();
+    if(action==='nexttrack'){audio.currentTime=.5;audio.emit('timeupdate');}
     const selections=audio.sourceSelections,calls=audio.playCalls.length;
     app.runTimers(2500);app.runTimers(8000);await settlePlayback();
     assert.equal(audio.sourceSelections,selections,action);assert.equal(audio.playCalls.length,calls,action);
@@ -219,8 +220,8 @@ test('recovery confirms real movement and preserves the current source and playb
   assert.equal(app.positions.at(-1).position,.7);await app.actions['copy-playback-report']();
   assert.ok(JSON.parse(copied).events.some(e=>e.event==='restart-progress'&&e.recovered));
 });
-test('buffering or a late background timer does not trigger a restart reload',async t=>{
-  for(const mode of ['buffering','late','seeking']){
+test('a late background timer or active seek does not trigger a restart reload',async t=>{
+  for(const mode of ['late','seeking']){
     const app=await mediaFixture(t,{isIOS:true,manualTimers:true}),audio=app.audio;
     app.state.queue.index=2;await app.playback.loadTrack('c',true);await settlePlayback();app.setHidden(true);
     audio.currentTime=audio.duration;audio.ended=true;audio.paused=true;audio.emit('ended');await app.mediaActions.play();
@@ -697,16 +698,16 @@ test('installed-update toast is shown once, only for the running ready release',
   await app.offline.announceInstalled('squidify-shell-v5',true);
   assert.equal(app.element('#toast').hidden,true);
   assert.equal(app.db.stores.settings.has('installedShellVersion'),false);
-  await Promise.all([app.offline.announceInstalled('squidify-shell-v26',true),app.offline.announceInstalled('squidify-shell-v26',true)]);
+  await Promise.all([app.offline.announceInstalled('squidify-shell-v27',true),app.offline.announceInstalled('squidify-shell-v27',true)]);
   assert.match(app.element('#toast').textContent,/Squidify updated/);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v26');
-  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v26',true);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v27');
+  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v27',true);
   assert.equal(reopened.element('#toast').hidden,true);
 });
 test('a first install records its release without claiming an update',async t=>{
-  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v26',false);
+  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v27',false);
   assert.equal(app.element('#toast').hidden,true);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v26');
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v27');
 });
 
 
@@ -765,4 +766,73 @@ test('paused hidden-player canvas remains transparent and redraws as a baseline 
  app.enhancements.drawWave();assert.equal(canvas.height,140,'hidden canvas must not become a one-pixel filled image');assert.equal(curves.length,0);assert.ok(clears>0);
  width=390;height=85;app.enhancements.drawWave();assert.equal(canvas.height,85);assert.ok(curves.length>0);assert.ok(curves.every(y=>y===82),'paused wave stays within three pixels of bottom');
  width=0;height=0;curves=[];app.enhancements.drawWave();assert.equal(curves.length,0);width=390;height=85;app.enhancements.drawWave();assert.ok(curves.every(y=>y===82));
+});
+
+test('rapid Previous at the first song avoids repeated native plays and zero seeks',async t=>{
+  const app=await mediaFixture(t,{isIOS:true,manualTimers:true}),audio=app.audio;
+  await app.mediaActions.play();audio.currentTime=1.4;
+  const calls=audio.playCalls.length,selections=audio.sourceSelections;
+  let seeks=0;const native=app.nativeAudios[0];
+  Object.defineProperty(native,'currentTime',{get(){return this._time;},set(value){seeks++;this._time=value;}});
+  for(let i=0;i<30;i++)await app.mediaActions.previoustrack();
+  assert.equal(app.state.queue.index,0);assert.equal(seeks,1);
+  assert.equal(audio.playCalls.length,calls);assert.equal(audio.sourceSelections,selections);
+  app.runTimers(2500);assert.equal(audio.sourceSelections,selections+1,'a frozen ordinary restart is recovered');
+});
+test('late same-song play failure cannot override a newer Pause then Play',async t=>{
+  const app=await mediaFixture(t),audio=app.audio;await settlePlayback();
+  const nativePlay=audio.play;let reject;
+  audio.play=()=>new Promise((resolve,fail)=>{reject=fail;});
+  const old=app.mediaActions.play();app.mediaActions.pause();audio.play=nativePlay;
+  await app.mediaActions.play();reject(Object.assign(new Error('old request'),{name:'NotAllowedError'}));await old;
+  assert.doesNotMatch(app.element('#toast').textContent,/Unable to play/);
+  assert.equal(audio.paused,false);assert.equal(app.mediaSession.playbackState,'playing');
+});
+test('late native play event after explicit Pause is stopped',async t=>{
+  const app=await mediaFixture(t),audio=app.audio;
+  await app.mediaActions.play();app.mediaActions.pause();audio.paused=false;audio.emit('play');
+  assert.equal(audio.paused,true);assert.equal(app.mediaSession.playbackState,'paused');
+});
+test('metadata-only stall after ordinary Next gets one bounded recovery and honors Pause',async t=>{
+  for(const paused of [false,true]){
+    const app=await mediaFixture(t,{isIOS:true,manualTimers:true}),audio=app.audio;
+    await app.mediaActions.play();await app.mediaActions.nexttrack();
+    audio.readyState=1;audio.emit('waiting');const selections=audio.sourceSelections;
+    app.runTimers(2500);assert.equal(audio.sourceSelections,selections,'do not retry normal short buffering');
+    if(paused)app.mediaActions.pause();
+    app.runTimers(8000);assert.equal(audio.sourceSelections,selections+(paused?0:1));
+    if(!paused){app.runTimers(2500);app.runTimers(8000);assert.equal(audio.sourceSelections,selections+1);}
+    assert.equal(audio.paused,true);
+  }
+});
+test('frozen resume recovery keeps the listening position',async t=>{
+  const app=await mediaFixture(t,{isIOS:true,manualTimers:true}),audio=app.audio;
+  await app.mediaActions.play();audio.currentTime=47;audio.emit('timeupdate');app.mediaActions.pause();
+  const before=audio.sourceSelections;await app.mediaActions.play();app.runTimers(2500);
+  assert.equal(audio.sourceSelections,before+1);
+  assert.equal(audio.currentTime,47);assert.equal(app.state.queue.current,'a');
+  audio.currentTime=47.5;audio.emit('timeupdate');const selections=audio.sourceSelections;
+  app.runTimers(2500);app.runTimers(8000);assert.equal(audio.sourceSelections,selections);assert.equal(audio.paused,false);
+});
+test('rapid mixed transport bursts retain the final queue selection and pause intent',async t=>{
+  const app=await mediaFixture(t,{isIOS:true,manualTimers:true}),audio=app.audio;
+  await app.mediaActions.play();await settlePlayback();
+  const requests=[];
+  for(let i=0;i<20;i++){
+    requests.push(app.mediaActions.nexttrack(),app.mediaActions.previoustrack());
+    app.mediaActions.seekto({seekTime:0});app.mediaActions.pause();requests.push(app.mediaActions.play());
+  }
+  app.mediaActions.pause();await Promise.all(requests);await settlePlayback();
+  app.runTimers(2500);app.runTimers(8000);
+  assert.equal(app.state.queue.current,'a');assert.equal(audio.paused,true);assert.equal(app.mediaSession.playbackState,'paused');
+});
+test('recovery issues fresh play when the replaced source play promise is still pending',async t=>{
+  const app=await mediaFixture(t,{isIOS:true,manualTimers:true}),audio=app.audio;
+  await app.mediaActions.play();const nativePlay=audio.play;let reject;
+  audio.play=()=>{audio.paused=false;return new Promise((resolve,fail)=>{reject=fail;});};
+  const loading=app.mediaActions.nexttrack();audio.readyState=1;audio.emit('waiting');
+  audio.play=nativePlay;const calls=audio.playCalls.length;app.runTimers(8000);
+  assert.equal(audio.playCalls.length,calls+1);
+  reject(Object.assign(new Error('obsolete request'),{name:'NotAllowedError'}));await loading;
+  assert.equal(app.mediaSession.playbackState,'playing');assert.equal(audio.paused,false);
 });
