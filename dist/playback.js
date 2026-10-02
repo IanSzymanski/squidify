@@ -2,6 +2,7 @@ import * as db from './storage.js';
 import { formatTime } from './core.js';
 import { icon } from './icons.js';
 import { createPlaybackReport } from './playback-report.js';
+import { createStandardMixing, overlapSeconds } from './mixing.js';
 
 export function createPlayback(context) {
   const { $, $$, audio, modal, nowDialog, state, byId } = context;
@@ -20,10 +21,11 @@ export function createPlayback(context) {
   const mediaURLs = new Map(), mediaPromises = new Map();
   let activeId = null, playGeneration = 0, playIntent = false, priming = false, audioUnlocked = false, stateTimer, lastSavedAt = 0;
   let eventsBound = false, mediaSessionBound = false;
-  let metadataReady = false, restorePosition = 0, playbackStarted = false;
+  let metadataReady = false, restorePosition = 0, playbackStarted = false, observedRate=audio.playbackRate;
   let completedGeneration = -1, restartCheck = null, progressSample = 0;
   let requestSerial = 0, pendingPlay = null;
   const playbackReport=createPlaybackReport(context);
+  const mixing=createStandardMixing(context,prepareNeighbors);
 
   function musicSession() {
     try{
@@ -35,6 +37,7 @@ export function createPlayback(context) {
   }
   function requestAudioPlay() {
     musicSession();updatePlaybackState();playbackReport.record('play-request');
+    mixing.unlock();
     // Share a pending request only within the same source and transport intent.
     if(pendingPlay?.generation===playGeneration&&pendingPlay.serial===requestSerial)return pendingPlay.promise;
     const request={generation:playGeneration,serial:requestSerial};
@@ -118,11 +121,39 @@ export function createPlayback(context) {
     const restartId=q.prepareNextPass(state.tracks)[0];
     const ids=[q.previousId,q.order[q.index+1],restartId];
     for(const id of new Set(ids))if(id&&byId(id))mediaURL(id).catch(()=>{});
-    if(audio.prepareRestart){
-      if(!restartId){audio.clearRestart();return;}
-      const prepare=url=>{if(byId(restartId)&&state.queue.prepareNextPass(state.tracks)[0]===restartId)try{audio.prepareRestart(url);}catch{playbackReport.record('restart-prepare-failed');}};
-      if(mediaURLs.has(restartId))prepare(mediaURLs.get(restartId));else mediaURL(restartId).then(prepare).catch(()=>{});
+    if(audio.prepareRestart&&!mixing.busy){
+      const prepareId=mixing.enabled?nextMixId():(context.isIOS?restartId:null);
+      if(!prepareId){audio.clearRestart();return;}
+      const prepare=url=>{const expected=mixing.enabled?nextMixId():(context.isIOS?state.queue.prepareNextPass(state.tracks)[0]:null);if(!mixing.busy&&byId(prepareId)&&expected===prepareId)try{audio.prepareRestart(url);}catch{playbackReport.record('restart-prepare-failed');}};
+      if(mediaURLs.has(prepareId))prepare(mediaURLs.get(prepareId));else mediaURL(prepareId).then(prepare).catch(()=>{});
     }
+  }
+  function nextMixId(){
+    const q=state.queue;if(q.repeat==='one')return null;
+    const id=q.order[q.index+1]||((q.repeat==='all'||q.futurePasses.length)?q.prepareNextPass(state.tracks)[0]:null);
+    return id&&id!==q.current&&byId(id)?id:null;
+  }
+  function mixTick(){
+    mixing.tick();
+    if(!mixing.enabled||mixing.busy||!playIntent||!playbackStarted||!hasCurrentMetadata()||audio.paused||audio.ended||audio.seeking)return;
+    const id=nextMixId(),url=mediaURLs.get(id),incoming=url&&audio.preparedElement(url);
+    if(!incoming)return;
+    const duration=overlapSeconds(mixing.settings.duration,audio.duration,incoming.duration,audio.playbackRate);
+    const remaining=(audio.duration-audio.currentTime)/audio.playbackRate;
+    if(duration<.08||remaining>duration||remaining<.08)return;
+    const generation=playGeneration,current=state.queue.current,index=state.queue.index;
+    const valid=()=>generation===playGeneration&&playIntent&&state.queue.current===current&&state.queue.index===index&&nextMixId()===id;
+    mixing.tryTransition(url,duration,valid,()=>{
+      if(!valid()||!audio.preparedElement(url))return false;
+      if(state.queue.next(state.tracks,false)!==id)return false;
+      cancelRestartCheck();completedGeneration=-1;playGeneration++;requestSerial++;pendingPlay=null;
+      metadataReady=false;
+      if(!audio.adoptMix(url))return false;
+      activeId=id;priming=false;restorePosition=0;metadataReady=true;playbackStarted=true;progressSample=audio.currentTime;observedRate=audio.playbackRate;
+      if(context.isIOS)watchRestart(playGeneration,url);
+      refreshMetadata();context.enhancements?.loadWave(id);renderPlayer();if(nowDialog.open)renderNowPlaying();highlightCurrent();if(!$('#queuePanel').hidden)renderQueue();saveSession();
+      playbackReport.record('mix-start',{seconds:Math.min(duration,remaining),curve:mixing.settings.curve});return true;
+    });
   }
   function primeAudio() {
     if(audioUnlocked || priming)return;
@@ -134,18 +165,19 @@ export function createPlayback(context) {
   }
   async function loadTrack(id,autoplay=true,restoreTime=0) {
     if(!byId(id))return;
+    const failedMixSource=mixing.failedSource;mixing.reset();
     const sourceEnded=sourceCompleted();cancelRestartCheck();
     const wasPlaying=playbackStarted&&!audio.paused&&!audio.ended;
     const generation=++playGeneration;const serial=++requestSerial;playIntent=autoplay;
     // Keep the native session alive while disk access finishes. Only its
     // position is cleared; ending the session here can suspend a locked page.
     metadataReady=false;playbackStarted=false;progressSample=restoreTime;updatePlaybackState();updatePositionState();playbackReport.record('load-track',{sourceCompleted:sourceEnded});
-    if(autoplay)primeAudio();
+    if(autoplay){musicSession();mixing.unlock();primeAudio();}
     try {
       // Cached neighbors must set the source and call play inside the media
       // action itself, without an await that gives WebKit a suspension point.
       const url=mediaURLs.get(id)||await mediaURL(id);if(generation!==playGeneration||!byId(id)||state.queue.current!==id)return;
-      const prepared=autoplay&&sourceEnded&&!!audio.activateRestart?.(url);
+      const prepared=autoplay&&sourceEnded&&url!==failedMixSource&&!!audio.activateRestart?.(url);
       if(sourceEnded)playbackReport.record(prepared?'restart-prepared':'restart-source-load');
       const sameSource=prepared||(activeId===id&&audio.currentSrc===url&&audio.readyState>=1);
       priming=false;activeId=id;restorePosition=restoreTime;
@@ -162,6 +194,7 @@ export function createPlayback(context) {
       }
       if(playIntent&&context.isIOS)watchRestart(generation,url);
       if(prepared)refreshMetadata();
+      mixing.beginTrack();
       const started=playIntent?requestAudioPlay().catch(e=>{
         if(generation===playGeneration&&serial===requestSerial&&playIntent&&e.name!=='AbortError'){
           cancelRestartCheck();playIntent=false;playbackStarted=false;updatePlaybackState();updatePositionState();
@@ -223,7 +256,7 @@ export function createPlayback(context) {
     toast(state.queue.shuffle?'Balanced shuffle on. Every song once, artists spread out.':'Shuffle off.');
   }
   function cycleRepeat() {
-    state.queue.repeat={off:'all',all:'one',one:'off'}[state.queue.repeat];saveSession();renderPlayer();toast({off:'Repeat off.',all:'Repeat queue on.',one:'Repeat song on.'}[state.queue.repeat]);
+    state.queue.repeat={off:'all',all:'one',one:'off'}[state.queue.repeat];prepareNeighbors();saveSession();renderPlayer();toast({off:'Repeat off.',all:'Repeat queue on.',one:'Repeat song on.'}[state.queue.repeat]);
   }
   function updateMediaSession() {
     if(!navigator.mediaSession)return;
@@ -276,6 +309,7 @@ export function createPlayback(context) {
     // Coalesce repeated near-identical restarts without disturbing an active seek.
     if(Math.abs(audio.currentTime-target)<.25&&!sourceCompleted())return;
     completedGeneration=-1;cancelRestartCheck();
+    mixing.cancel();
     audio.currentTime=target;
     if(playIntent&&context.isIOS&&target===0){
       watchRestart(playGeneration,mediaURLs.get(activeId));
@@ -285,9 +319,11 @@ export function createPlayback(context) {
     updateProgress();updatePositionState();saveSession();
   }
   function pausePlayback() {
+    mixing.cancel();
     cancelRestartCheck();requestSerial++;pendingPlay=null;playIntent=false;playbackStarted=false;audio.pause();updatePlaybackState();updatePositionState();saveSession();playbackReport.record('pause-request');
   }
   function unloadAudio() {
+    mixing.reset();
     cancelRestartCheck();completedGeneration=-1;
     playGeneration++;requestSerial++;pendingPlay=null;playIntent=false;priming=false;activeId=null;metadataReady=false;restorePosition=0;playbackStarted=false;
     audio.pause();audio.removeAttribute('src');audio.load();audio.clearRestart?.();clearMediaSession();
@@ -326,16 +362,16 @@ export function createPlayback(context) {
     else playbackStarted=true;
     renderPlayer();updatePlaybackState();updatePositionState();});
   audio.addEventListener('waiting',()=>{if(!loadedTrack())return;if(restartCheck){restartCheck.playing=false;scheduleRestartCheck(restartCheck,8000);}playbackStarted=false;updatePlaybackState();updatePositionState();});
-  audio.addEventListener('pause',()=>{if(priming||!audio.paused||!hasCurrentMetadata())return;cancelRestartCheck();requestSerial++;pendingPlay=null;playIntent=false;playbackStarted=false;renderPlayer();saveSession();updatePlaybackState();updatePositionState();});
+  audio.addEventListener('pause',()=>{if(priming||!audio.paused||!hasCurrentMetadata())return;mixing.cancel();cancelRestartCheck();requestSerial++;pendingPlay=null;playIntent=false;playbackStarted=false;renderPlayer();saveSession();updatePlaybackState();updatePositionState();});
   audio.addEventListener('ended',()=>{if(!priming&&hasCurrentMetadata()&&audio.ended){completedGeneration=playGeneration;cancelRestartCheck();nextTrack(false);}});
-  audio.addEventListener('timeupdate',()=>{if(!hasCurrentMetadata())return;restartAdvanced();observeProgress();updatePlaybackState();updateProgress();updatePositionState();if(Date.now()-lastSavedAt>5000){lastSavedAt=Date.now();saveSession();}});
+  audio.addEventListener('timeupdate',()=>{if(!hasCurrentMetadata())return;restartAdvanced();observeProgress();mixTick();updatePlaybackState();updateProgress();updatePositionState();if(Date.now()-lastSavedAt>5000){lastSavedAt=Date.now();saveSession();}});
   audio.addEventListener('loadedmetadata',refreshMetadata);
-  for(const name of ['seeking','seeked','durationchange','ratechange'])audio.addEventListener(name,()=>{if(priming)return;if(name==='seeking'||name==='seeked')progressSample=audio.currentTime;updateProgress();updatePositionState();if(name==='seeked')saveSession();});
+  for(const name of ['seeking','seeked','durationchange','ratechange'])audio.addEventListener(name,()=>{if(priming)return;if(name==='seeking'||(name==='ratechange'&&audio.playbackRate!==observedRate))mixing.cancel();observedRate=audio.playbackRate;if(name==='seeking'||name==='seeked')progressSample=audio.currentTime;updateProgress();updatePositionState();if(name==='seeked')saveSession();});
   audio.addEventListener('emptied',()=>{if(audio.readyState>=1)return;metadataReady=false;if(activeId)updatePositionState();else clearMediaSession();});
   audio.addEventListener('error',()=>{if(priming||!audio.getAttribute('src'))return;unloadAudio();renderPlayer();toast('This file cannot be played in this browser. Try another song or an MP3/AAC copy.',true);});
   audio.addEventListener('volumechange',()=>{renderPlayer();saveSession();});
   for(const event of ['play','playing','pause','waiting','stalled','ended','emptied','loadedmetadata','error'])audio.addEventListener(event,()=>playbackReport.record(event));
-  try{navigator.audioSession?.addEventListener?.('statechange',()=>{if(navigator.audioSession.state==='interrupted')cancelRestartCheck();playbackReport.record('audio-session-state');});}catch{}
+  try{navigator.audioSession?.addEventListener?.('statechange',()=>{if(navigator.audioSession.state==='interrupted'){cancelRestartCheck();mixing.cancel();}playbackReport.record('audio-session-state');});}catch{}
   }
 
   function activeTrackId() { return activeId; }
@@ -375,10 +411,18 @@ export function createPlayback(context) {
   'add-queue':b=>{state.queue.add(b.dataset.id);prepareNeighbors();modal.close();saveSession();if(!$('#queuePanel').hidden)renderQueue();toast('Added to queue.');},
   'queue-jump':b=>{const i=Number(b.dataset.index);if(!Number.isInteger(i)||!byId(state.queue.order[i]))return;state.queue.index=i;loadTrack(state.queue.current,true);},
   'queue-remove':b=>{state.queue.removeAt(Number(b.dataset.index));prepareNeighbors();saveSession();renderQueue();},
-  'queue-up':b=>{const i=Number(b.dataset.index),q=state.queue;if(i<=q.index+1||i>=q.order.length)return;[q.order[i-1],q.order[i]]=[q.order[i],q.order[i-1]];saveSession();renderQueue();},
+  'queue-up':b=>{const i=Number(b.dataset.index),q=state.queue;if(i<=q.index+1||i>=q.order.length)return;[q.order[i-1],q.order[i]]=[q.order[i],q.order[i-1]];prepareNeighbors();saveSession();renderQueue();},
   'clear-queue':()=>{state.queue.clearFuturePasses();state.queue.order=state.queue.order.slice(0,state.queue.index+1);state.queue.source=[...new Set(state.queue.order)];prepareNeighbors();saveSession();renderQueue();},
   'remove-track':async b=>{const id=b.dataset.id;await db.deleteTrack(id);if(id===activeId||id===state.queue.current)unloadAudio();state.tracks.delete(id);state.playlists.forEach(p=>{p.trackIds=p.trackIds.filter(x=>x!==id);});state.queue.prune(new Set(state.tracks.keys()));prepareNeighbors();if(mediaURLs.has(id)){URL.revokeObjectURL(mediaURLs.get(id));mediaURLs.delete(id);}ui.releaseArtwork(id);modal.close();render();saveSession();toast('Song removed from this device.');}
   };
 
-  return { isCurrentView, loadTrack, togglePlay, nextTrack, previousTrack, toggleShuffle, seekTo, progress, updatePositionState, updateMediaSession, saveSession, activeTrackId, isPriming, setupMediaSession, bindEvents, reportPanel:playbackReport.panel, actions };
+  function resumeAfterMixing(){
+    if(!playIntent||!loadedTrack())return;
+    requestSerial++;pendingPlay=null;
+    requestAudioPlay().catch(()=>{pausePlayback();toast('Tap Play to continue listening.',true);});
+  }
+  function pauseForMixingInterruption(){
+    pausePlayback();playbackReport.record('mix-interrupted');toast('Crossfade was interrupted. Tap Play to continue without mixing.',true);
+  }
+  return { isCurrentView, loadTrack, togglePlay, nextTrack, previousTrack, toggleShuffle, seekTo, progress, updatePositionState, updateMediaSession, saveSession, activeTrackId, isPriming, setupMediaSession, bindEvents, reportPanel:playbackReport.panel, mixingPanel:mixing.panel, loadMixingSettings:mixing.loadSettings, updateMixing:mixing.update, saveMixingSettings:mixing.saveSettings, releaseMixingForOutput:mixing.releaseForOutput, resumeAfterMixing, pauseForMixingInterruption, actions };
 }

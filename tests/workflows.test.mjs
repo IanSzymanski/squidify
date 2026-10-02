@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { webcrypto, randomUUID } from 'node:crypto';
+import { audioContextFixture } from './mixing-audio-fixture.mjs';
 
 function memoryStore(){
   const stores=Object.fromEntries(['tracks','media','playlists','folders','settings'].map(n=>[n,new Map()]));
@@ -124,7 +125,7 @@ test('playback reports retain background events locally with bounded history and
   await app.mediaActions.play();app.setHidden(true);app.emitDocument('visibilitychange',{});audio.pause();
   app.setHidden(false);app.emitDocument('visibilitychange',{});app.actions['playback-report']();await app.actions['copy-playback-report']();
   const report=JSON.parse(copied);assert.ok(report.events.some(x=>x.event==='hidden'));assert.ok(report.events.some(x=>x.event==='pause'&&x.hidden));
-  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v32');
+  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v33');
   for(let i=0;i<100;i++)audio.emit('stalled');await app.actions['copy-playback-report']();assert.equal(JSON.parse(copied).events.length,80);
   const reopened=await mediaFixture(t,{localStorage,clipboard:{writeText:async value=>{copied=value;}}});await reopened.actions['copy-playback-report']();
   assert.ok(JSON.parse(copied).events.some(x=>x.event==='stalled'));assert.ok(values.size);
@@ -555,6 +556,7 @@ async function harness(t,db=memoryStore(),mediaOptions={}){
   if(mediaOptions.clipboard)navigator.clipboard=mediaOptions.clipboard;
   if(mediaOptions.stateThrows)Object.defineProperty(mediaSession,'playbackState',{set(){throw new Error('Unsupported state');}});
   const context=vm.createContext({document,window,navigator,location,localStorage:mediaOptions.localStorage,URL,Blob,File,TextEncoder,DataView,Uint8Array,ArrayBuffer,crypto:{subtle:webcrypto.subtle,randomUUID},Audio:FakeAudio,MediaMetadata:class{constructor(value){Object.assign(this,value);}},AbortController,FormData,matchMedia:()=>({matches:false}),console:{error(){}},setTimeout:(f,ms)=>{const timer=setTimeout(f,ms);timers.add(timer);return timer;},clearTimeout:id=>{clearTimeout(id);timers.delete(id);}});
+  if(mediaOptions.AudioContext)context.AudioContext=mediaOptions.AudioContext;
   if(mediaOptions.random)context.Math=Object.assign(Object.create(Math),{random:mediaOptions.random});
   if(mediaOptions.manualTimers){context.setTimeout=(fn,ms)=>{const id=++timerId;manualTimers.set(id,{fn,ms});return id;};context.clearTimeout=id=>manualTimers.delete(id);context.Date=class extends Date{static now(){return clock;}};}
   // Evaluate the real ES module graph in an isolated browser-like context.
@@ -701,16 +703,16 @@ test('installed-update toast is shown once, only for the running ready release',
   await app.offline.announceInstalled('squidify-shell-v5',true);
   assert.equal(app.element('#toast').hidden,true);
   assert.equal(app.db.stores.settings.has('installedShellVersion'),false);
-  await Promise.all([app.offline.announceInstalled('squidify-shell-v32',true),app.offline.announceInstalled('squidify-shell-v32',true)]);
+  await Promise.all([app.offline.announceInstalled('squidify-shell-v33',true),app.offline.announceInstalled('squidify-shell-v33',true)]);
   assert.match(app.element('#toast').textContent,/Squidify updated/);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v32');
-  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v32',true);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v33');
+  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v33',true);
   assert.equal(reopened.element('#toast').hidden,true);
 });
 test('a first install records its release without claiming an update',async t=>{
-  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v32',false);
+  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v33',false);
   assert.equal(app.element('#toast').hidden,true);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v32');
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v33');
 });
 
 
@@ -870,4 +872,132 @@ test('inactive metadata and active clock progress reconcile session state withou
   assert.equal(app.mediaSession.playbackState,'playing');assert.equal(audio.playCalls.length,calls);
   app.mediaActions.pause();standby.emit('loadedmetadata');audio.emit('timeupdate');
   assert.equal(app.mediaSession.playbackState,'paused');assert.equal(audio.paused,true);
+});
+
+async function mixingFixture(t,options={}){
+  const webAudio=audioContextFixture();
+  const app=await mediaFixture(t,{AudioContext:webAudio.AudioContext,manualTimers:true,...options});
+  app.playback.updateMixing('enabled',true);await settlePlayback();await app.mediaActions.play();await settlePlayback();
+  return {...app,webAudio};
+}
+async function enterOverlap(app){
+  const outgoing=app.audio.currentElement;outgoing.currentTime=116;outgoing.emit('timeupdate');await settlePlayback();return outgoing;
+}
+test('SQ-033 remains native by default; controls persist and restore without migrating music',async t=>{
+  const webAudio=audioContextFixture(),app=await mediaFixture(t,{AudioContext:webAudio.AudioContext});
+  await app.mediaActions.play();assert.equal(webAudio.instances.length,0);assert.equal(app.nativeAudios.length,1);
+  app.state.view='settings';app.render();assert.match(app.element('#main').innerHTML,/Standard mixing/);assert.match(app.element('#main').innerHTML,/mixingFields" disabled/);
+  app.emitDocument('input',{target:{dataset:{mixing:'duration'},value:'7.5',type:'number'}});
+  app.emitDocument('input',{target:{dataset:{mixing:'curve'},value:'smooth',type:'select-one'}});
+  app.emitDocument('input',{target:{dataset:{mixing:'enabled'},checked:true,type:'checkbox'}});
+  await app.playback.saveMixingSettings();
+  assert.deepEqual(app.db.stores.settings.get('mixing').value,{enabled:true,duration:7.5,curve:'smooth'});
+  const reopened=await harness(t,app.db);assert.match(reopened.playback.mixingPanel(),/value="7.5"/);assert.match(reopened.playback.mixingPanel(),/value="smooth" selected/);
+  assert.equal(reopened.state.tracks.size,4);assert.equal(reopened.audio.paused,true);
+});
+test('SQ-033 overlaps two prepared sources on the audio clock and commits one queue advance',async t=>{
+  const app=await mixingFixture(t),outgoing=await enterOverlap(app),engine=app.webAudio.instances[0];
+  assert.equal(app.state.queue.current,'b');assert.equal(app.audio.currentTime,0);assert.equal(app.mediaSession.metadata.title,'Song b');
+  assert.equal(app.mediaSession.playbackState,'playing');assert.equal(outgoing.paused,false);assert.equal(app.audio.paused,false);
+  const curves=engine.gains.flatMap(n=>n.gain.events.filter(e=>e.kind==='curve'));
+  assert.equal(curves.length,2);assert.ok(curves.every(e=>e.time===10&&e.duration===4));
+  assert.equal(curves[0].values[0],1);assert.equal(curves[1].values[0],0);assert.equal(curves[1].values.at(-1),1);
+  outgoing.currentTime=120;outgoing.ended=true;outgoing.emit('ended');assert.equal(app.state.queue.current,'b','outgoing completion cannot skip a second song');
+  engine.currentTime=14.1;app.audio.currentTime=4.1;app.audio.emit('timeupdate');await settlePlayback();
+  assert.equal(outgoing.paused,true);assert.equal(app.nativeAudios.length,2);assert.equal(app.state.queue.index,1);
+  assert.equal(app.positions.at(-1).position,4.1);assert.equal(app.audio.volume,1);
+});
+test('SQ-033 pause, seek, manual skip and interruption never leave an audible tail',async t=>{
+  for(const action of ['pause','seek','next','interruption']){
+    let interrupt;const audioSession={type:'playback',state:'active',addEventListener:(n,fn)=>{interrupt=fn;}};
+    const app=await mixingFixture(t,{audioSession}),outgoing=await enterOverlap(app);
+    if(action==='pause')app.mediaActions.pause();
+    if(action==='seek')app.playback.seekTo(22);
+    if(action==='next')await app.mediaActions.nexttrack();
+    if(action==='interruption'){audioSession.state='interrupted';interrupt();}
+    assert.equal(outgoing.paused,true,action);assert.equal(outgoing.muted,true,action);
+    const source=app.audio.src;app.runTimers(4030);assert.equal(app.audio.src,source,'cancelled cleanup cannot alter a newer source');
+    if(action==='pause'){assert.equal(app.audio.paused,true);await app.mediaActions.play();assert.equal(app.state.queue.current,'b');assert.equal(app.audio.currentTime,0);}
+    if(action==='seek')assert.equal(app.audio.currentTime,22);
+    if(action==='next')assert.equal(app.state.queue.current,'c');
+  }
+});
+test('SQ-033 disabling during a fade restores native playback, position and user volume',async t=>{
+  const app=await mixingFixture(t),outgoing=await enterOverlap(app),engine=app.webAudio.instances[0];
+  app.audio.currentTime=1.75;app.audio.volume=.4;app.audio.muted=true;
+  app.playback.updateMixing('enabled',false);await settlePlayback();await app.playback.saveMixingSettings();
+  assert.equal(engine.state,'closed');assert.equal(outgoing.paused,true);assert.equal(app.audio.currentTime,1.75);
+  assert.equal(app.audio.volume,.4);assert.equal(app.audio.muted,true);assert.equal(app.audio.paused,false);
+  assert.equal(app.state.queue.current,'b');assert.equal(app.mediaSession.metadata.title,'Song b');assert.equal(app.db.stores.settings.get('mixing').value.enabled,false);
+  assert.equal(engine.sources.has(app.audio.currentElement),false,'disabled playback uses a fresh unrouted native element');
+  app.audio.currentTime=119;app.audio.emit('timeupdate');await settlePlayback();assert.equal(app.state.queue.current,'b');
+});
+test('SQ-033 cannot start the wrong song after queue edits or a late incoming play promise',async t=>{
+  for(const action of ['pause','replace-next','skip']){
+    const app=await mixingFixture(t);const outgoing=app.audio.currentElement,incoming=app.nativeAudios.find(x=>x!==outgoing);let release;
+    const play=incoming.play.bind(incoming);incoming.play=()=>{play();return new Promise(resolve=>{release=resolve;});};
+    outgoing.currentTime=116;outgoing.emit('timeupdate');assert.equal(app.state.queue.current,'a');
+    if(action==='pause')app.mediaActions.pause();
+    if(action==='replace-next')await app.actions['play-next']({dataset:{id:'d'}});
+    if(action==='skip')await app.mediaActions.nexttrack();
+    release();await settlePlayback();
+    assert.equal(app.state.queue.current,action==='skip'?'b':'a');assert.equal(incoming.paused,true);assert.equal(incoming.muted,true);
+    if(action==='replace-next'){outgoing.currentTime=116.2;outgoing.emit('timeupdate');await settlePlayback();assert.equal(app.state.queue.current,'a','deferred replacement has not started until its Play resolves');release();await settlePlayback();assert.equal(app.state.queue.current,'d');}
+  }
+});
+test('SQ-033 preserves ordered/shuffled passes, inserted next songs and repeat boundaries',async t=>{
+  for(const mode of ['ordered','shuffle','insert','repeat-one','repeat-all','end','single']){
+    const app=await mixingFixture(t),q=app.state.queue;
+    if(mode==='shuffle'){q.setShuffle(true,app.state.tracks);app.playback.toggleShuffle();app.playback.toggleShuffle();}
+    if(mode==='insert')await app.actions['play-next']({dataset:{id:'d'}});
+    if(mode==='repeat-one'){q.repeat='all';app.actions.repeat();}
+    if(['repeat-all','end'].includes(mode)){q.index=2;await app.playback.loadTrack('c',true);if(mode==='repeat-all')app.actions.repeat();}
+    if(mode==='single'){q.source=['a'];q.order=['a'];q.index=0;await app.playback.loadTrack('a',true);app.actions.repeat();}
+    await settlePlayback();
+    const before=q.current,expected=mode==='repeat-all'?q.prepareNextPass(app.state.tracks)[0]:q.order[q.index+1];
+    await enterOverlap(app);
+    if(['repeat-one','end','single'].includes(mode))assert.equal(q.current,before,mode);
+    else assert.equal(q.current,expected,mode);
+    assert.equal(new Set(q.order).size,q.order.length,mode);
+  }
+});
+test('SQ-033 unavailable processing, unready media and rejected incoming playback use normal handoff',async t=>{
+  for(const mode of ['unsupported','unready','rejected','suspended','remote-output']){
+    const app=mode==='unsupported'?await mediaFixture(t,{manualTimers:true}):await mixingFixture(t);
+    if(mode==='unsupported'){app.playback.updateMixing('enabled',true);await app.mediaActions.play();await settlePlayback();}
+    const outgoing=app.audio.currentElement,incoming=app.nativeAudios.find(x=>x!==outgoing);
+    if(mode==='unready')incoming.readyState=1;
+    if(mode==='rejected')incoming.play=()=>Promise.reject(new Error('Not allowed'));
+    if(mode==='suspended'){app.webAudio.instances[0].suspend();assert.equal(app.audio.paused,true);await app.mediaActions.play();}
+    if(mode==='remote-output'){app.playback.releaseMixingForOutput();await settlePlayback();}
+    app.audio.currentTime=116;app.audio.emit('timeupdate');await settlePlayback();
+    assert.equal(app.state.queue.current,'a',mode);assert.equal(app.audio.paused,false,mode);
+    app.audio.currentTime=120;app.audio.ended=true;app.audio.paused=true;app.audio.emit('ended');await settlePlayback();
+    assert.equal(app.state.queue.current,'b',mode);assert.equal(app.audio.paused,false,mode);
+  }
+});
+test('SQ-033 physical mute/volume preferences apply to both overlapping native players',async t=>{
+  const app=await mixingFixture(t),outgoing=await enterOverlap(app);
+  app.audio.muted=true;app.audio.volume=.25;
+  assert.equal(outgoing.muted,true);assert.equal(app.audio.muted,true);assert.equal(outgoing.volume,.25);
+  app.audio.muted=false;assert.equal(outgoing.muted,false);assert.equal(app.audio.muted,false);
+});
+test('SQ-033 processor interruption ends the overlap and returns to native playback without auto-resuming',async t=>{
+  const app=await mixingFixture(t),outgoing=await enterOverlap(app),engine=app.webAudio.instances[0];
+  app.audio.currentTime=1.2;engine.suspend();await settlePlayback();
+  assert.equal(app.audio.paused,true);assert.equal(outgoing.paused,true);assert.equal(engine.state,'closed');
+  assert.equal(app.mediaSession.playbackState,'paused');assert.equal(app.audio.currentTime,1.2);assert.equal(app.state.queue.current,'b');
+  assert.equal(engine.sources.has(app.audio.currentElement),false);
+  app.runTimers(4030);assert.equal(app.audio.paused,true);
+  await app.mediaActions.play();assert.equal(app.audio.paused,false);assert.equal(app.webAudio.instances.length,1,'manual resume stays native until the user changes mixing settings');
+});
+test('SQ-033 repeated enable and disable restores pause intent and does not reuse routed native elements',async t=>{
+  const app=await mixingFixture(t);
+  for(let i=0;i<3;i++){
+    app.mediaActions.pause();const current=app.audio.currentTime;
+    app.playback.updateMixing('duration',0);await settlePlayback();
+    assert.equal(app.audio.paused,true);assert.equal(app.audio.currentTime,current);
+    app.playback.updateMixing('duration',4);await settlePlayback();await app.mediaActions.play();await settlePlayback();
+    assert.equal(app.audio.paused,false);assert.equal(app.webAudio.instances.filter(x=>x.state==='running').length,1);
+  }
 });

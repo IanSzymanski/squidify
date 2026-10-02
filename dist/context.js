@@ -9,9 +9,9 @@ export function createContext() {
   const fileInput = $('#fileInput'), folderInput = $('#folderInput');
   const state = { tracks: new Map(), playlists: [], folders: [], queue: new PlayQueue(), view: 'library', detail: '', search: '', tab: 'songs', sort: 'added', busy: false, stopImport: false, shellReady: false, updateDownloading: false, storage: {}, installPrompt: null, ready: false };
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  const audio=isIOS?createAudioOutput(primaryAudio,()=>{
+  const audio=createAudioOutput(primaryAudio,()=>{
     const element=document.createElement('audio');element.setAttribute('playsinline','');document.body.append(element);return element;
-  }):primaryAudio;
+  });
   const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone;
   const trackArray = () => [...state.tracks.values()];
   const byId = id => state.tracks.get(id);

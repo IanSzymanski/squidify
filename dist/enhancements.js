@@ -110,9 +110,9 @@ export function createEnhancements(context) {
   async function chooseOutput(){
     try{
       if(navigator.mediaDevices?.selectAudioOutput && audio.setSinkId){
-        const device=await navigator.mediaDevices.selectAudioOutput();await audio.setSinkId(device.deviceId);outputRevision++;selectedOutput=device;renderOutput();
-        context.ui.toast(`Audio output: ${device.label||'selected device'}.`);
-      }else if(audio.webkitShowPlaybackTargetPicker){audio.webkitShowPlaybackTargetPicker();}
+        const device=await navigator.mediaDevices.selectAudioOutput();const mixingOff=context.playback.releaseMixingForOutput();await audio.setSinkId(device.deviceId);outputRevision++;selectedOutput=device;renderOutput();
+        context.ui.toast(`Audio output: ${device.label||'selected device'}.${mixingOff?' Crossfade turned off.':''}`);
+      }else if(audio.webkitShowPlaybackTargetPicker){context.playback.releaseMixingForOutput();audio.webkitShowPlaybackTargetPicker();}
       else context.ui.toast('Choose headphones or a speaker in your device’s audio controls. This browser does not report the active Bluetooth connection.');
     }catch(error){if(error.name!=='NotAllowedError'&&error.name!=='AbortError')context.ui.toast('Could not change output. Use your device’s audio controls.',true);}
   }

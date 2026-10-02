@@ -11,7 +11,7 @@ A device-local music player and installable offline web app. No remote music ser
 
 Importing creates an offline copy in IndexedDB. Folder handles are remembered where `showDirectoryPicker` and structured cloning of handles are supported. Other browsers use folder/file inputs. Cloud-only files must be downloaded before an offline import. Original files are never modified.
 
-The shell is cached by a service worker. A secure origin (HTTPS, or localhost for development) is required; opening index.html through file:// does not install an offline app. Every runtime asset is packaged locally. Files are played through object URLs with one active native HTML audio element. On iOS, one additional inactive element prepares playlist restarts before the current source ends. Media Session provides supported Lock Screen/headphone actions.
+The shell is cached by a service worker. A secure origin (HTTPS, or localhost for development) is required; opening index.html through file:// does not install an offline app. Every runtime asset is packaged locally. Files are played through object URLs with one active native HTML audio element by default. A bounded second element prepares iOS playlist restarts or optional standard crossfades. Mixing uses Web Audio gains only when enabled. Media Session provides supported Lock Screen/headphone actions.
 
 ## Features
 
@@ -53,7 +53,7 @@ is needed.
 
 ## Limits
 
-Browser codecs determine which audio files play. DRM/subscription downloads are not supported. Background playback, automatic next track while locked, and media controls remain subject to browser/OS behavior and have not been verified on a physical iPhone. Audio is not gapless and there is no crossfade.
+Browser codecs determine which audio files play. DRM/subscription downloads are not supported. Background playback, automatic next track while locked, and media controls remain subject to browser/OS behavior and have not been verified on a physical iPhone. Audio is not sample-accurate gapless playback. Optional standard crossfades are available in settings; physical-phone/background mixing remains unverified.
 
 ### SQ-031: external music controls
 
@@ -420,3 +420,43 @@ response, including its settings preview. All other v30 changes remain intact.
 Search and its tab retract beneath a separate header-chrome layer. Both share
 the header's solid background and have no border. Removed the mini-player's
 purple top hairline.
+
+## Shell v33 — SQ-033 standard mixing
+
+Settings > Playback > Standard mixing adds an opt-in Crossfade toggle, a 0–12
+second duration slider/numeric field (default 4 seconds), and Linear, Equal power,
+or Smooth S-curve fades. Preferences save locally. New and existing libraries
+start with mixing off unless the user has explicitly saved it enabled.
+
+`mixing.js` manages preferences, native-source gain routing and scheduled curves.
+The existing queue remains authoritative, including shuffle, inserted next songs,
+repeat-all and pass history. Repeat-one and identical adjacent sources do not
+crossfade. Natural changes start a prepared incoming player at zero gain; only
+successful startup advances the queue and adopts its already-running clock.
+Gain envelopes use the audio clock, with 3.1 dB of mixing headroom. Native progress
+events trigger the transition window; delayed events can shorten an overlap or
+leave an ordinary handoff. This is not beat matching or sample-accurate sequencing.
+
+Two native players are reused. Durations are capped at half of each adjacent
+song (adjusted for playback rate), preventing three simultaneous songs. Manual
+skips remain immediate, with a 15 ms incoming gain ramp when processing is active.
+Pause, seek, new sources, processing interruption and preference changes cancel
+the outgoing tail. Unsupported processing, unready media and rejected incoming
+playback leave the existing native handoff available. A failed incoming player
+is not reused for that fallback.
+
+Turning mixing off, or setting duration to zero, closes its processing context
+and restores fresh native elements at the current position without audio routing.
+If the processing context is interrupted, playback pauses, the native path is
+restored, and the user can press Play to continue without mixing. It never tries
+to reclaim audio focus automatically. Explicit browser speaker/AirPlay selection
+turns mixing off; the system-managed default/Bluetooth route remains eligible.
+
+Verification: **128 automated checks passed**, including 13 new mixing checks
+covering preferences, fade curves/headroom, bounded overlaps, queue/transport
+races, failure handoffs, native-path restoration, and interruption handling.
+The existing lock-screen, restart, import, storage and offline-shell regressions
+pass. These use simulated audio; no physical iPhone or audible browser rendering
+was available. Physical Safari/Home Screen checks remain required for locked
+crossfades, headphone controls, output changes and long background sessions.
+The optional non-overlapping fade-out/fade-in mode remains future work.
