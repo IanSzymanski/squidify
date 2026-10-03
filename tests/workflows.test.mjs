@@ -126,7 +126,7 @@ test('playback reports retain background events locally with bounded history and
   await app.mediaActions.play();app.setHidden(true);app.emitDocument('visibilitychange',{});audio.pause();
   app.setHidden(false);app.emitDocument('visibilitychange',{});app.actions['playback-report']();await app.actions['copy-playback-report']();
   const report=JSON.parse(copied);assert.ok(report.events.some(x=>x.event==='hidden'));assert.ok(report.events.some(x=>x.event==='pause'&&x.hidden));
-  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v34');
+  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v35');
   for(let i=0;i<100;i++)audio.emit('stalled');await app.actions['copy-playback-report']();assert.equal(JSON.parse(copied).events.length,80);
   const reopened=await mediaFixture(t,{localStorage,clipboard:{writeText:async value=>{copied=value;}}});await reopened.actions['copy-playback-report']();
   assert.ok(JSON.parse(copied).events.some(x=>x.event==='stalled'));assert.ok(values.size);
@@ -557,7 +557,7 @@ async function harness(t,db=memoryStore(),mediaOptions={}){
   if(mediaOptions.audioSession)navigator.audioSession=mediaOptions.audioSession;
   if(mediaOptions.clipboard)navigator.clipboard=mediaOptions.clipboard;
   if(mediaOptions.stateThrows)Object.defineProperty(mediaSession,'playbackState',{set(){throw new Error('Unsupported state');}});
-  const context=vm.createContext({document,window,navigator,location,localStorage:mediaOptions.localStorage,URL,Blob,File,TextEncoder,DataView,Uint8Array,ArrayBuffer,crypto:{subtle:webcrypto.subtle,randomUUID},Audio:FakeAudio,MediaMetadata:class{constructor(value){Object.assign(this,value);}},AbortController,FormData,setInterval:(fn,ms)=>{const timer=setInterval(fn,ms);timers.add(timer);return timer;},clearInterval,matchMedia:()=>({matches:false}),console:{error(){}},setTimeout:(f,ms)=>{const timer=setTimeout(f,ms);timers.add(timer);return timer;},clearTimeout:id=>{clearTimeout(id);timers.delete(id);}});
+  const context=vm.createContext({document,window,navigator,location,localStorage:mediaOptions.localStorage,URL,Blob,File,TextEncoder,TextDecoder,DOMException,DataView,Uint8Array,ArrayBuffer,fetch:mediaOptions.fetch,crypto:{subtle:webcrypto.subtle,randomUUID},Audio:FakeAudio,MediaMetadata:class{constructor(value){Object.assign(this,value);}},AbortController,FormData,setInterval:(fn,ms)=>{const timer=setInterval(fn,ms);timers.add(timer);return timer;},clearInterval,matchMedia:()=>({matches:false}),console:{error(){}},setTimeout:(f,ms)=>{const timer=setTimeout(f,ms);timers.add(timer);return timer;},clearTimeout:id=>{clearTimeout(id);timers.delete(id);}});
   if(mediaOptions.AudioContext)context.AudioContext=mediaOptions.AudioContext;
   if(mediaOptions.random)context.Math=Object.assign(Object.create(Math),{random:mediaOptions.random});
   if(mediaOptions.manualTimers){context.setTimeout=(fn,ms)=>{const id=++timerId;manualTimers.set(id,{fn,ms});return id;};context.clearTimeout=id=>manualTimers.delete(id);context.Date=class extends Date{static now(){return clock;}};}
@@ -575,12 +575,46 @@ async function harness(t,db=memoryStore(),mediaOptions={}){
   await entry.evaluate();await entry.namespace.ready;
   const {context:app,actions:appActions}=entry.namespace;
   t.after(()=>{for(const timer of timers)clearTimeout(timer);});
-  return {mixEditor:app.mixEditor,playlists:app.playlists,document,elapse:ms=>{clock+=ms;},runTimers:ms=>{for(const [id,timer]of [...manualTimers])if(timer.ms===ms){manualTimers.delete(id);timer.fn();}},audio:app.audio,nativeAudios,setHidden:value=>{document.hidden=value;},outputControls,waveCanvases,enhancements:app.enhancements,ui:app.ui,offline:app.offline,state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,saveTrackDetails:app.playlists.saveTrackDetails,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,mediaSession,registrations,positions,playback:app.playback,emitDocument:(name,event)=>events['doc:'+name]?.forEach(fn=>fn(event)),emitWindow:name=>events[name]?.()};
+  return {converter:app.converter,mixEditor:app.mixEditor,playlists:app.playlists,document,elapse:ms=>{clock+=ms;},runTimers:ms=>{for(const [id,timer]of [...manualTimers])if(timer.ms===ms){manualTimers.delete(id);timer.fn();}},audio:app.audio,nativeAudios,setHidden:value=>{document.hidden=value;},outputControls,waveCanvases,enhancements:app.enhancements,ui:app.ui,offline:app.offline,state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,saveTrackDetails:app.playlists.saveTrackDetails,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,mediaSession,registrations,positions,playback:app.playback,emitDocument:(name,event)=>events['doc:'+name]?.forEach(fn=>fn(event)),emitWindow:name=>events[name]?.()};
 }
 test('empty library starts with working folder and file input alternatives',async t=>{
   const app=await harness(t);assert.match(app.element('#main').innerHTML,/Your music belongs here/);
   await app.actions['choose-folder']();assert.equal(app.element('#folderInput').clicks,1);
   app.actions['choose-files']();assert.equal(app.element('#fileInput').clicks,1);
+});
+function conversionService(onDownload){
+  const calls=[],id='a'.repeat(48);const json=value=>new Response(JSON.stringify(value),{headers:{'Content-Type':'application/json'}});
+  return {calls,id,fetch:async(url,options)=>{calls.push([url,options.method]);if(url.endsWith('/health'))return json({service:'squidify-converter',api_version:1,ready:true});if(url.endsWith('/convert'))return json({job_id:id});if(url.includes('/download/')){await onDownload?.();return new Response('ID3test',{headers:{'Content-Type':'audio/mpeg'}});}if(url.endsWith('/complete'))return json({status:'downloaded'});if(options.method==='DELETE')return json({status:'cancelled'});return json({status:'ready',title:'Converted song'});}};
+}
+test('Settings explains the required service; conversion commits through normal import without interrupting audio',async t=>{
+  const service=conversionService(),app=await mediaFixture(t,{fetch:service.fetch});app.state.view='settings';app.render();assert.match(app.element('#main').innerHTML,/Service needed/);assert.equal(service.calls.length,0);
+  await app.converter.saveConnection('https://converter.example','a'.repeat(48));app.converter.setURL('https://youtu.be/BaW_jenozKc');await app.mediaActions.play();const source=app.audio.src;
+  await app.converter.run(true);assert.equal(app.converter.status.phase,'saved');assert.equal(app.state.tracks.size,5);assert.equal(app.db.stores.media.size,5);assert.equal(app.audio.src,source);assert.equal(app.audio.paused,false);assert.equal(app.converter.job,null);
+  assert.equal(app.db.stores.settings.get('converterJob').value,null);assert.ok(service.calls.some(([url,method])=>url.endsWith('/complete')&&method==='POST'));
+});
+test('storage failure retains converted bytes for retry and only acknowledges after the library commit',async t=>{
+  let app;const service=conversionService(()=>app.db.fail(Object.assign(new Error('Full'),{name:'QuotaExceededError'})));app=await mediaFixture(t,{fetch:service.fetch});
+  await app.converter.saveConnection('https://converter.example','a'.repeat(48));app.converter.setURL('https://youtu.be/BaW_jenozKc');await app.converter.run(true);
+  assert.equal(app.converter.status.phase,'ready');assert.equal(app.converter.status.hasFile,true);assert.equal(app.state.tracks.size,4);assert.ok(!service.calls.some(([url])=>url.endsWith('/complete')));
+  await app.converter.run();assert.equal(app.converter.status.phase,'saved');assert.equal(app.state.tracks.size,5);assert.equal(service.calls.filter(([url])=>url.includes('/download/')).length,1);
+});
+test('reopening resumes the saved job after a failed transfer without creating another conversion',async t=>{
+  let fail=true;const service=conversionService(()=>{if(fail)throw new TypeError('Disconnected');}),app=await mediaFixture(t,{fetch:service.fetch});
+  await app.converter.saveConnection('https://converter.example','a'.repeat(48));app.converter.setURL('https://youtu.be/BaW_jenozKc');await app.converter.run(true);assert.equal(app.converter.status.phase,'error');assert.ok(app.converter.job);
+  const count=service.calls.length;fail=false;const reopened=await harness(t,app.db,{fetch:service.fetch});assert.equal(reopened.converter.status.phase,'paused');assert.equal(service.calls.length,count,'reopening never silently creates or starts a conversion');
+  await reopened.converter.run();assert.equal(reopened.converter.status.phase,'saved');assert.equal(service.calls.filter(([url])=>url.endsWith('/convert')).length,1);assert.equal(reopened.state.tracks.size,5);
+});
+test('duplicate converted audio uses existing import detection rather than making another song',async t=>{
+  const service=conversionService(),app=await mediaFixture(t,{fetch:service.fetch});await app.converter.saveConnection('https://converter.example','a'.repeat(48));app.converter.setURL('https://youtu.be/BaW_jenozKc');
+  await app.converter.run(true);await app.converter.run(true);assert.equal(app.state.tracks.size,5);assert.match(app.converter.status.message,/already in your library/);
+});
+test('cancelling a pending conversion ignores its late response and never imports audio',async t=>{
+  const service=conversionService();let release;
+  const fetcher=(url,options)=>url.includes('/api/jobs/')&&options.method==='GET'?new Promise(resolve=>{release=resolve;}):service.fetch(url,options);
+  const app=await mediaFixture(t,{fetch:fetcher});await app.converter.saveConnection('https://converter.example','a'.repeat(48));app.converter.setURL('https://youtu.be/BaW_jenozKc');
+  const pending=app.converter.run(true);for(let i=0;i<10&&!release;i++)await settlePlayback();assert.ok(release);
+  await app.converter.cancel();release(new Response(JSON.stringify({status:'ready',title:'Old conversion'}),{headers:{'Content-Type':'application/json'}}));await pending;
+  assert.equal(app.state.tracks.size,4);assert.equal(app.converter.job,null);assert.equal(app.converter.status.hasFile,false);assert.ok(service.calls.some(([,method])=>method==='DELETE'));assert.ok(!service.calls.some(([url])=>url.includes('/download/')));
 });
 test('playlist mix entry replaces duplicate search; ordered rows support dragging and saves are atomic',async t=>{
   const app=await mediaFixture(t);await app.db.put('playlists',{id:'p',name:'Night mix',trackIds:['a','b','c'],mix:{version:1,clips:{a:{in:12}},transitions:{}}});
@@ -737,16 +771,16 @@ test('installed-update toast is shown once, only for the running ready release',
   await app.offline.announceInstalled('squidify-shell-v5',true);
   assert.equal(app.element('#toast').hidden,true);
   assert.equal(app.db.stores.settings.has('installedShellVersion'),false);
-  await Promise.all([app.offline.announceInstalled('squidify-shell-v34',true),app.offline.announceInstalled('squidify-shell-v34',true)]);
+  await Promise.all([app.offline.announceInstalled('squidify-shell-v35',true),app.offline.announceInstalled('squidify-shell-v35',true)]);
   assert.match(app.element('#toast').textContent,/Squidify updated/);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v34');
-  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v34',true);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v35');
+  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v35',true);
   assert.equal(reopened.element('#toast').hidden,true);
 });
 test('a first install records its release without claiming an update',async t=>{
-  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v34',false);
+  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v35',false);
   assert.equal(app.element('#toast').hidden,true);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v34');
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v35');
 });
 
 

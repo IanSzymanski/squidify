@@ -52,7 +52,7 @@ export function createImport(context) {
   function selectFiles() {openFilePicker(fileInput);}
   async function importEntries(entries,folderId=null) {
     state.pickerOpen=false;
-    if(state.busy)return;
+    if(state.busy)return {busy:true,added:0};
     state.busy=true;state.stopImport=false;modal.close();
     const banner=$('#importBanner'),progress=$('#importProgress'),text=$('#importText');banner.hidden=false;progress.removeAttribute('value');
     text.textContent='Reading your music…';
@@ -96,6 +96,7 @@ export function createImport(context) {
       if(!total&&!added&&!failed&&!skipped)toast('No audio files found in that folder.');
       runDurationJobs();saveSession();
     }
+    return {added,skipped,unsupported,failed,quota,stopped:state.stopImport,trackId:firstTrack};
   }
   async function validateAudio(file) {
     // Metadata decoding catches corrupt/unsupported codecs before committing a copy.
