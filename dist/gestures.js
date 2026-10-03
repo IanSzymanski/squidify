@@ -19,7 +19,7 @@ export function bindGestures({ document, window, run, openMenu, nowDialog, begin
   document.addEventListener('pointerdown', event => {
     if (event.isPrimary === false || (event.button !== undefined && event.button !== 0)) { reset(); return; }
     reset();
-    if (event.target.closest('input, textarea, select, [contenteditable="true"], #modal')) return;
+    if (event.target.closest('input, textarea, select, [contenteditable="true"], #modal, .mix-editor, [data-reorder-track]')) return;
     const item = listTarget(event.target);
     const full = event.target.closest('#nowDialog');
     const player = event.target.closest('#player');
@@ -91,6 +91,7 @@ export function bindGestures({ document, window, run, openMenu, nowDialog, begin
   document.addEventListener('contextmenu', event => {
     const item = listTarget(event.target);
     if (!item || nowDialog.open) return;
+    if(item.dataset.reorderTrack){event.preventDefault();return;}
     event.preventDefault(); reset(); consume(); openMenu(item);
   });
   document.addEventListener('keydown', event => {

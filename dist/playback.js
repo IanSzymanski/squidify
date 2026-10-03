@@ -391,7 +391,7 @@ export function createPlayback(context) {
       seekforward:null,
       stop:()=>{pausePlayback();seekTo(0);}
     };
-    for(const [name,handler]of Object.entries(handlers))try{session.setActionHandler(name,handler?details=>{playbackReport.record('remote-'+name);return handler(details);}:null);}catch{}
+    for(const [name,handler]of Object.entries(handlers))try{session.setActionHandler(name,handler?details=>{playbackReport.record('remote-'+name);if(!state.mixEditing)return handler(details);}:null);}catch{}
     updateMediaSession();
   }
 
@@ -424,5 +424,5 @@ export function createPlayback(context) {
   function pauseForMixingInterruption(){
     pausePlayback();playbackReport.record('mix-interrupted');toast('Crossfade was interrupted. Tap Play to continue without mixing.',true);
   }
-  return { isCurrentView, loadTrack, togglePlay, nextTrack, previousTrack, toggleShuffle, seekTo, progress, updatePositionState, updateMediaSession, saveSession, activeTrackId, isPriming, setupMediaSession, bindEvents, reportPanel:playbackReport.panel, mixingPanel:mixing.panel, loadMixingSettings:mixing.loadSettings, updateMixing:mixing.update, saveMixingSettings:mixing.saveSettings, releaseMixingForOutput:mixing.releaseForOutput, resumeAfterMixing, pauseForMixingInterruption, actions };
+  return { pausePlayback, clearMediaSession, isCurrentView, loadTrack, togglePlay, nextTrack, previousTrack, toggleShuffle, seekTo, progress, updatePositionState, updateMediaSession, saveSession, activeTrackId, isPriming, setupMediaSession, bindEvents, reportPanel:playbackReport.panel, mixingPanel:mixing.panel, loadMixingSettings:mixing.loadSettings, updateMixing:mixing.update, saveMixingSettings:mixing.saveSettings, releaseMixingForOutput:mixing.releaseForOutput, resumeAfterMixing, pauseForMixingInterruption, actions };
 }

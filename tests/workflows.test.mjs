@@ -27,6 +27,7 @@ class Element {
   getBoundingClientRect(){return {left:0,top:0,width:100,height:40};}
   contains(node){return node===this || (this.children||[]).includes(node);}
   blur(){}
+  remove(){}
   showModal(){this.open=true;}close(){this.open=false;}focus(){}click(){this.clicks=(this.clicks||0)+1;}append(...children){this.children=children;}querySelectorAll(){return [];}querySelector(){return new Element();}
 }
 class FakeAudio extends Element {
@@ -125,7 +126,7 @@ test('playback reports retain background events locally with bounded history and
   await app.mediaActions.play();app.setHidden(true);app.emitDocument('visibilitychange',{});audio.pause();
   app.setHidden(false);app.emitDocument('visibilitychange',{});app.actions['playback-report']();await app.actions['copy-playback-report']();
   const report=JSON.parse(copied);assert.ok(report.events.some(x=>x.event==='hidden'));assert.ok(report.events.some(x=>x.event==='pause'&&x.hidden));
-  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v33');
+  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v34');
   for(let i=0;i<100;i++)audio.emit('stalled');await app.actions['copy-playback-report']();assert.equal(JSON.parse(copied).events.length,80);
   const reopened=await mediaFixture(t,{localStorage,clipboard:{writeText:async value=>{copied=value;}}});await reopened.actions['copy-playback-report']();
   assert.ok(JSON.parse(copied).events.some(x=>x.event==='stalled'));assert.ok(values.size);
@@ -544,8 +545,9 @@ async function harness(t,db=memoryStore(),mediaOptions={}){
   const nativeAudios=[];
   const makeAudio=()=>{const el=new FakeAudio();if(nativeAudios.length&&mediaOptions.standbyDuration)el.nextDuration=mediaOptions.standbyDuration;nativeAudios.push(el);el.blockFreshLoad=()=>mediaOptions.stallFreshLoadsWhenHidden&&document.hidden&&!nativeAudios.some(a=>!a.paused&&!a.ended);return el;};
   const element=s=>{if(!elements.has(s)){const el=s==='#audio'?makeAudio():new Element();if(s==='#audio'){if(mediaOptions.sinkId!==undefined)el.sinkId=mediaOptions.sinkId;el.nativeOutput=mediaOptions.nativeOutput;}if(['#queuePanel','#toast','#importBanner'].includes(s))el.hidden=true;elements.set(s,el);}return elements.get(s);};
-  const document={querySelector:element,querySelectorAll:selector=>selector==='.audio-wave'?waveCanvases:selector==='.output-control'?outputControls:[],addEventListener:(name,f)=>{(events['doc:'+name]||=[]).push(f);},createElement:tag=>tag==='audio'?makeAudio():new Element(),body:Object.assign(new Element(),{append(){}}),hidden:false};
-  const window={addEventListener:(name,f)=>{events[name]=f;},scrollTo(){}};
+  const document={querySelector:element,querySelectorAll:selector=>selector==='.audio-wave'?waveCanvases:selector==='.output-control'?outputControls:[],addEventListener:(name,f)=>{(events['doc:'+name]||=[]).push(f);},createElement:tag=>tag==='audio'?makeAudio():new Element(),body:new Element(),hidden:false};
+  const window={addEventListener:(name,f)=>{events[name]=f;},removeEventListener(){},scrollTo(){}};
+  document.removeEventListener=()=>{};
   let hash='#library';const location={href:'https://squidify.example/',get hash(){return hash;},set hash(v){hash=v;queueMicrotask(()=>events.hashchange?.());}};
   const actions={},registrations=[],positions=[];
   const mediaSession={setActionHandler:(name,f)=>{registrations.push(name);if(mediaOptions.unsupported?.includes(name))throw new Error('Unsupported action');actions[name]=f;},setPositionState:value=>{if(mediaOptions.positionThrows)throw new Error('Unsupported position');positions.push(value);}};
@@ -555,7 +557,7 @@ async function harness(t,db=memoryStore(),mediaOptions={}){
   if(mediaOptions.audioSession)navigator.audioSession=mediaOptions.audioSession;
   if(mediaOptions.clipboard)navigator.clipboard=mediaOptions.clipboard;
   if(mediaOptions.stateThrows)Object.defineProperty(mediaSession,'playbackState',{set(){throw new Error('Unsupported state');}});
-  const context=vm.createContext({document,window,navigator,location,localStorage:mediaOptions.localStorage,URL,Blob,File,TextEncoder,DataView,Uint8Array,ArrayBuffer,crypto:{subtle:webcrypto.subtle,randomUUID},Audio:FakeAudio,MediaMetadata:class{constructor(value){Object.assign(this,value);}},AbortController,FormData,matchMedia:()=>({matches:false}),console:{error(){}},setTimeout:(f,ms)=>{const timer=setTimeout(f,ms);timers.add(timer);return timer;},clearTimeout:id=>{clearTimeout(id);timers.delete(id);}});
+  const context=vm.createContext({document,window,navigator,location,localStorage:mediaOptions.localStorage,URL,Blob,File,TextEncoder,DataView,Uint8Array,ArrayBuffer,crypto:{subtle:webcrypto.subtle,randomUUID},Audio:FakeAudio,MediaMetadata:class{constructor(value){Object.assign(this,value);}},AbortController,FormData,setInterval:(fn,ms)=>{const timer=setInterval(fn,ms);timers.add(timer);return timer;},clearInterval,matchMedia:()=>({matches:false}),console:{error(){}},setTimeout:(f,ms)=>{const timer=setTimeout(f,ms);timers.add(timer);return timer;},clearTimeout:id=>{clearTimeout(id);timers.delete(id);}});
   if(mediaOptions.AudioContext)context.AudioContext=mediaOptions.AudioContext;
   if(mediaOptions.random)context.Math=Object.assign(Object.create(Math),{random:mediaOptions.random});
   if(mediaOptions.manualTimers){context.setTimeout=(fn,ms)=>{const id=++timerId;manualTimers.set(id,{fn,ms});return id;};context.clearTimeout=id=>manualTimers.delete(id);context.Date=class extends Date{static now(){return clock;}};}
@@ -573,12 +575,44 @@ async function harness(t,db=memoryStore(),mediaOptions={}){
   await entry.evaluate();await entry.namespace.ready;
   const {context:app,actions:appActions}=entry.namespace;
   t.after(()=>{for(const timer of timers)clearTimeout(timer);});
-  return {elapse:ms=>{clock+=ms;},runTimers:ms=>{for(const [id,timer]of [...manualTimers])if(timer.ms===ms){manualTimers.delete(id);timer.fn();}},audio:app.audio,nativeAudios,setHidden:value=>{document.hidden=value;},outputControls,waveCanvases,enhancements:app.enhancements,ui:app.ui,offline:app.offline,state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,saveTrackDetails:app.playlists.saveTrackDetails,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,mediaSession,registrations,positions,playback:app.playback,emitDocument:(name,event)=>events['doc:'+name]?.forEach(fn=>fn(event)),emitWindow:name=>events[name]?.()};
+  return {mixEditor:app.mixEditor,playlists:app.playlists,document,elapse:ms=>{clock+=ms;},runTimers:ms=>{for(const [id,timer]of [...manualTimers])if(timer.ms===ms){manualTimers.delete(id);timer.fn();}},audio:app.audio,nativeAudios,setHidden:value=>{document.hidden=value;},outputControls,waveCanvases,enhancements:app.enhancements,ui:app.ui,offline:app.offline,state:app.state,actions:appActions,importEntries:app.importer.importEntries,savePlaylistForm:app.playlists.savePlaylistForm,saveTrackDetails:app.playlists.saveTrackDetails,addToPlaylist:app.playlists.addToPlaylist,saveSession:app.playback.saveSession,render:app.ui.render,readRoute:app.ui.readRoute,db,element,mediaActions:actions,mediaSession,registrations,positions,playback:app.playback,emitDocument:(name,event)=>events['doc:'+name]?.forEach(fn=>fn(event)),emitWindow:name=>events[name]?.()};
 }
 test('empty library starts with working folder and file input alternatives',async t=>{
   const app=await harness(t);assert.match(app.element('#main').innerHTML,/Your music belongs here/);
   await app.actions['choose-folder']();assert.equal(app.element('#folderInput').clicks,1);
   app.actions['choose-files']();assert.equal(app.element('#fileInput').clicks,1);
+});
+test('playlist mix entry replaces duplicate search; ordered rows support dragging and saves are atomic',async t=>{
+  const app=await mediaFixture(t);await app.db.put('playlists',{id:'p',name:'Night mix',trackIds:['a','b','c'],mix:{version:1,clips:{a:{in:12}},transitions:{}}});
+  app.state.playlists=await app.db.all('playlists');app.state.view='playlist';app.state.detail='p';app.render();
+  const html=app.element('#main').innerHTML;assert.match(html,/data-action="open-mix"/);assert.doesNotMatch(html,/Search this playlist/);assert.match(html,/data-reorder-track="a"/);
+  await app.playlists.reorderTracks('p',['c','a','b']);assert.deepEqual(app.db.stores.playlists.get('p').trackIds,['c','a','b']);assert.equal(app.db.stores.playlists.get('p').mix.clips.a.in,12);
+  app.db.fail(new Error('quota'));await assert.rejects(app.playlists.reorderTracks('p',['a','b','c']),/quota/);assert.deepEqual([...app.state.playlists[0].trackIds],['c','a','b']);
+  assert.deepEqual([...app.state.queue.order],['a','b','c'],'editing playlist order does not rewrite an active listening queue');
+});
+test('opening the mix editor suspends normal playback, blocks passive shortcuts and remote transport, then restores the playlist',async t=>{
+  const app=await mediaFixture(t);await app.db.put('playlists',{id:'p',name:'Night mix',trackIds:['a','b','c']});app.state.playlists=await app.db.all('playlists');
+  await app.mediaActions.play();const current=app.audio.currentTime;
+  await app.actions['open-mix']({dataset:{id:'p'}});assert.equal(app.mixEditor.isOpen,true);assert.equal(app.audio.paused,true);assert.equal(app.state.mixEditing,true);
+  const dialog=app.document.body.children[0];assert.match(dialog.innerHTML,/mix-mobile-nav/);assert.match(dialog.innerHTML,/data-mix-action="play"/);
+  app.mediaActions.play();app.mediaActions.nexttrack();app.emitDocument('keydown',{key:' ',target:{tagName:'DIV'}});assert.equal(app.audio.paused,true);assert.equal(app.state.queue.current,'a');
+  await app.mixEditor.close();assert.equal(app.state.mixEditing,false);assert.equal(app.audio.currentTime,current);assert.equal(app.audio.paused,true);assert.equal(app.mixEditor.isOpen,false);
+});
+test('mix edits persist with the playlist; a failed close preserves edits and retry succeeds',async t=>{
+  const app=await mediaFixture(t);await app.db.put('playlists',{id:'p',name:'Night mix',trackIds:['a','b','c']});app.state.playlists=await app.db.all('playlists');
+  await app.mixEditor.open('p');const dialog=app.document.body.children[0];
+  const input={dataset:{mixFx:'reverb'},value:'0.62',matches:()=>false};dialog.events.input[0].f({target:input});dialog.events.change[0].f({target:input});
+  app.db.fail(new Error('quota'));await app.mixEditor.close();assert.equal(app.mixEditor.isOpen,true);assert.equal(app.db.stores.playlists.get('p').mix,undefined);
+  await app.mixEditor.close();assert.equal(app.mixEditor.isOpen,false);assert.equal(app.db.stores.playlists.get('p').mix.clips.a.effects.reverb,.62);
+  const reopened=await harness(t,app.db);assert.equal(reopened.state.playlists[0].mix.clips.a.effects.reverb,.62);assert.equal(reopened.state.tracks.get('a').duration,120);
+});
+test('mix undo and redo include playlist ordering and effect edits in the same saved revision',async t=>{
+  const app=await mediaFixture(t);await app.db.put('playlists',{id:'p',name:'Night mix',trackIds:['a','b','c']});app.state.playlists=await app.db.all('playlists');
+  await app.mixEditor.open('p');const dialog=app.document.body.children[0];
+  const action=name=>{const button={dataset:{mixAction:name},closest:()=>button};dialog.events.click[0].f({target:button});};
+  const input={dataset:{mixFx:'bass'},value:'4.5',matches:()=>false};dialog.events.input[0].f({target:input});dialog.events.change[0].f({target:input});
+  action('move-down');action('undo');action('undo');action('redo');await app.mixEditor.close();
+  const saved=app.db.stores.playlists.get('p');assert.deepEqual(saved.trackIds,['a','b','c']);assert.equal(saved.mix.clips.a.effects.bass,4.5);
 });
 test('equalizer settings apply through input events, persist across reopening, and reset',async t=>{
  const app=await harness(t);app.state.view='settings';app.render();
@@ -703,16 +737,16 @@ test('installed-update toast is shown once, only for the running ready release',
   await app.offline.announceInstalled('squidify-shell-v5',true);
   assert.equal(app.element('#toast').hidden,true);
   assert.equal(app.db.stores.settings.has('installedShellVersion'),false);
-  await Promise.all([app.offline.announceInstalled('squidify-shell-v33',true),app.offline.announceInstalled('squidify-shell-v33',true)]);
+  await Promise.all([app.offline.announceInstalled('squidify-shell-v34',true),app.offline.announceInstalled('squidify-shell-v34',true)]);
   assert.match(app.element('#toast').textContent,/Squidify updated/);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v33');
-  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v33',true);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v34');
+  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v34',true);
   assert.equal(reopened.element('#toast').hidden,true);
 });
 test('a first install records its release without claiming an update',async t=>{
-  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v33',false);
+  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v34',false);
   assert.equal(app.element('#toast').hidden,true);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v33');
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v34');
 });
 
 

@@ -1,6 +1,8 @@
 import * as db from './storage.js';
 import { escapeHTML as esc } from './core.js';
 import { icon } from './icons.js';
+import { bindDragOrder } from './drag-order.js';
+import { moveOrder } from './mix-model.js';
 
 export function createPlaylists(context) {
   const { $, audio, modal, nowDialog, state, trackArray, byId, playlist, idToken, plural, totalDuration } = context;
@@ -73,7 +75,16 @@ export function createPlaylists(context) {
   }
 
 
+  async function reorderTracks(id, trackIds) {
+    const p=playlist(id);if(!p)return;
+    if(trackIds.length!==p.trackIds.length||new Set(trackIds).size!==trackIds.length||trackIds.some(id=>!p.trackIds.includes(id)))throw new Error('The playlist changed. Try moving this song again.');
+    await db.put('playlists',{...p,trackIds:[...trackIds]});p.trackIds=[...trackIds];render();
+  }
   function bindEvents() {
+    bindDragOrder({root:context.main,selector:'[data-reorder-track]',getScroller:()=>context.main,onDrop:async(row,target,after)=>{
+      const p=playlist(state.detail);if(state.view!=='playlist'||!p)return;
+      await reorderTracks(p.id,moveOrder(p.trackIds,row.dataset.reorderTrack,target.dataset.reorderTrack,after));toast('Playlist order updated.');
+    },onStart:()=>toast('Drag to move. Release to place.'),onError:report});
   document.addEventListener('submit',event=>{
     if(event.target.id==='editTrackForm'){event.preventDefault();saveTrackDetails(event.target).catch(e=>report(e,'Could not save song details. Please try again.'));}
     if(event.target.id==='playlistForm'){event.preventDefault();savePlaylistForm(event.target).catch(e=>report(e,'Could not save the playlist. Your name is still here; try again.'));}
@@ -112,5 +123,5 @@ export function createPlaylists(context) {
 
   async function createFromTool(input) {if(!input||typeof input.name!=='string'||!input.name.trim()||input.name.length>100||!Array.isArray(input.trackIds)||input.trackIds.some(id=>typeof id!=='string'||!byId(id)))throw new Error('Use a nonempty name of up to 100 characters and existing track IDs.');const p={id:idToken(),name:input.name.trim(),trackIds:[...new Set(input.trackIds)],color:'purple',createdAt:Date.now()};await db.put('playlists',p);state.playlists.push(p);route('playlist',p.id);render();return{id:p.id,name:p.name,songCount:p.trackIds.length};}
 
-  return { saveTrackDetails, toggleLike, savePlaylistForm, addToPlaylist, createFromTool, bindEvents, actions };
+  return { saveTrackDetails, toggleLike, savePlaylistForm, addToPlaylist, createFromTool, reorderTracks, bindEvents, actions };
 }
