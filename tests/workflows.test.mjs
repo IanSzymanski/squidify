@@ -126,7 +126,7 @@ test('playback reports retain background events locally with bounded history and
   await app.mediaActions.play();app.setHidden(true);app.emitDocument('visibilitychange',{});audio.pause();
   app.setHidden(false);app.emitDocument('visibilitychange',{});app.actions['playback-report']();await app.actions['copy-playback-report']();
   const report=JSON.parse(copied);assert.ok(report.events.some(x=>x.event==='hidden'));assert.ok(report.events.some(x=>x.event==='pause'&&x.hidden));
-  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v35');
+  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v36');
   for(let i=0;i<100;i++)audio.emit('stalled');await app.actions['copy-playback-report']();assert.equal(JSON.parse(copied).events.length,80);
   const reopened=await mediaFixture(t,{localStorage,clipboard:{writeText:async value=>{copied=value;}}});await reopened.actions['copy-playback-report']();
   assert.ok(JSON.parse(copied).events.some(x=>x.event==='stalled'));assert.ok(values.size);
@@ -771,16 +771,16 @@ test('installed-update toast is shown once, only for the running ready release',
   await app.offline.announceInstalled('squidify-shell-v5',true);
   assert.equal(app.element('#toast').hidden,true);
   assert.equal(app.db.stores.settings.has('installedShellVersion'),false);
-  await Promise.all([app.offline.announceInstalled('squidify-shell-v35',true),app.offline.announceInstalled('squidify-shell-v35',true)]);
+  await Promise.all([app.offline.announceInstalled('squidify-shell-v36',true),app.offline.announceInstalled('squidify-shell-v36',true)]);
   assert.match(app.element('#toast').textContent,/Squidify updated/);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v35');
-  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v35',true);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v36');
+  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v36',true);
   assert.equal(reopened.element('#toast').hidden,true);
 });
 test('a first install records its release without claiming an update',async t=>{
-  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v35',false);
+  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v36',false);
   assert.equal(app.element('#toast').hidden,true);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v35');
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v36');
 });
 
 
@@ -1068,4 +1068,15 @@ test('SQ-033 repeated enable and disable restores pause intent and does not reus
     app.playback.updateMixing('duration',4);await settlePlayback();await app.mediaActions.play();await settlePlayback();
     assert.equal(app.audio.paused,false);assert.equal(app.webAudio.instances.filter(x=>x.state==='running').length,1);
   }
+});
+
+test('playlist cover settings persist independently, preserve photos and recover from storage failures',async t=>{
+  const app=await mediaFixture(t),photo=new Blob(['photo'],{type:'image/jpeg'});
+  await app.db.put('playlists',{id:'cover-p',name:'Night <glow>',trackIds:['a','b'],artwork:photo});app.state.playlists=await app.db.all('playlists');
+  const form={dataset:{id:'cover-p'},elements:{style:{value:'5'},title:{checked:false},info:{checked:true}}};
+  await app.enhancements.saveCoverSettings(form,true);
+  const saved=app.db.stores.playlists.get('cover-p');assert.equal(saved.coverStyle,5);assert.equal(saved.coverTitle,false);assert.equal(saved.coverInfo,true);assert.equal(saved.coverVariation,1);assert.equal(saved.artwork.size,photo.size);
+  const reopened=await harness(t,app.db),p=reopened.state.playlists[0];assert.equal(p.coverTitle,false);assert.equal(p.coverStyle,5);
+  assert.doesNotMatch(reopened.ui.collectionArt(p),/cover-name/);assert.match(reopened.ui.collectionArt(p),/2 songs/);
+  form.elements.info.checked=false;app.db.fail(new Error('Full'));await assert.rejects(app.enhancements.saveCoverSettings(form));assert.equal(app.state.playlists[0].coverInfo,true);assert.equal(app.db.stores.playlists.get('cover-p').coverInfo,true);
 });

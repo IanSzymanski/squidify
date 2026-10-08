@@ -1,3 +1,4 @@
+import { COVER_STYLES, coverOptions, coverURL } from './cover-art.js';
 import { BAND_COUNT, spectrumAt, followLevel, equalizerPoints, equalizerTangents, equalizerMotionBounds, equalizerCanvasHeight, EQ_CONTROLS, EQ_DEFAULTS, normalizeEqualizerSettings } from './spectrum.js';
 import { icon } from './icons.js';
 import * as db from './storage.js';
@@ -57,7 +58,20 @@ export function createEnhancements(context) {
   }
   function coverDialog(kind,id){
     coverTarget={kind,id};
-    context.ui.setModal(context.ui.modalHead('Cover photo')+`<p>Choose a photo for this ${kind}. It will be cropped to a square.</p><p class="small-note">JPEG, PNG, WebP or AVIF · up to 25 MB. Saved at up to 1024 × 1024 pixels and counted in the same device storage as your music.</p><div class="modal-actions"><button class="button" data-action="remove-cover">Use default artwork</button><button class="button primary" data-action="choose-cover">Choose photo</button></div>`);
+    context.ui.setModal(context.ui.modalHead(kind==='playlist'?'Playlist settings':'Cover photo')+`${kind==='playlist'?coverSettings(playlist(id)):''}<p>Choose a photo for this ${kind}. It will be cropped to a square.</p><p class="small-note">JPEG, PNG, WebP or AVIF · up to 25 MB. Saved at up to 1024 × 1024 pixels and counted in the same device storage as your music.</p><div class="modal-actions"><button class="button" data-action="remove-cover">Use default artwork</button><button class="button primary" data-action="choose-cover">Choose photo</button></div>`);
+  }
+  function coverSettings(p){
+    if(!p)return '';const opts=coverOptions(p);
+    return `<form id="coverSettingsForm" data-id="${esc(p.id)}"><div class="cover-preview">${context.ui.collectionArt(p)}</div><label for="coverStyle">Artwork style</label><select class="text-input" id="coverStyle" name="style"><option value="" ${p.coverStyle==null?'selected':''}>Automatic</option>${COVER_STYLES.map((name,i)=>`<option value="${i}" ${Number(p.coverStyle)===i&&p.coverStyle!=null?'selected':''}>${name}</option>`).join('')}</select><button type="button" class="button" data-action="vary-cover" data-id="${esc(p.id)}">New variation</button><label class="cover-toggle"><input name="title" type="checkbox" ${opts.title?'checked':''}>Show playlist name</label><label class="cover-toggle"><input name="info" type="checkbox" ${opts.info?'checked':''}>Show song count and duration</label><div class="modal-actions"><button class="button primary" type="submit">Save cover settings</button></div></form>`;
+  }
+  function coverDraft(form){return {coverStyle:form.elements.style.value===''?null:Number(form.elements.style.value),coverTitle:form.elements.title.checked,coverInfo:form.elements.info.checked};}
+  document.addEventListener('change',event=>{const form=event.target.closest?.('#coverSettingsForm');if(!form)return;const p=playlist(form.dataset.id);if(p)form.querySelector('.cover-preview').innerHTML=context.ui.collectionArt({...p,...coverDraft(form)});});
+  async function saveCoverSettings(form,vary=false){
+    const p=playlist(form.dataset.id);if(!p)return;
+    const next={...p,...coverDraft(form),coverVariation:(Number(p.coverVariation)||0)+(vary?1:0)};
+    await db.put('playlists',next);Object.assign(p,next);mediaArt.delete(p.id);
+    context.ui.render();if(nowDialog.open)context.ui.renderNowPlaying();context.playback.updateMediaSession();
+    if(vary)coverDialog('playlist',p.id);else{modal.close();context.ui.toast('Cover settings saved.');}
   }
   function chooseCover(){if(coverBusy)return;state.pickerOpen=true;input.click();}
   async function saveCover(blob){
@@ -79,14 +93,16 @@ export function createEnhancements(context) {
   }
   function playlistMediaArt(p){
     if(p.artwork)return {src:context.ui.artworkURL({...p,id:'playlist:'+p.id}),type:p.artwork.type};
-    if(!mediaArt.has(p.id)){
+    const key=JSON.stringify([p.id,p.name,p.trackIds,p.coverStyle,p.coverVariation,p.coverTitle,p.coverInfo,p.trackIds.map(byId).map(t=>t?.duration)]);
+    if(!mediaArt.has(key)){
       let seed=0;for(const c of p.id)seed=(Math.imul(seed,31)+c.charCodeAt(0))>>>0;
       const canvas=document.createElement('canvas');canvas.width=canvas.height=512;const ctx=canvas.getContext('2d');if(!ctx)return null;
       const angle=(seed%360)*Math.PI/180;ctx.translate(256,256);ctx.rotate(angle);const grad=ctx.createLinearGradient(-360,-240,360,240);
       [[0,'#070914'],[.16,'#12352f'],[.3,'#0eedb5'],[.32,'#d3fff1'],[.34,'#219882'],[.45,'#0d182f'],[.62,'#ae00ff'],[.65,'#ebc8ff'],[.67,'#510b76'],[.85,'#4497af'],[1,'#070914']].forEach(([at,color])=>grad.addColorStop(at,color));
-      ctx.fillStyle=grad;ctx.fillRect(-370,-370,740,740);mediaArt.set(p.id,canvas.toDataURL('image/png'));
+      ctx.fillStyle=grad;ctx.fillRect(-370,-370,740,740);if(mediaArt.size>32)mediaArt.clear();mediaArt.set(key,canvas.toDataURL('image/png'));
+      if(typeof Image==='function'){const image=new Image();image.onload=()=>{ctx.setTransform(1,0,0,1,0,0);ctx.drawImage(image,0,0,512,512);const opts=coverOptions(p);if(opts.title||opts.info){const shade=ctx.createLinearGradient(0,300,0,512);shade.addColorStop(0,'#080a1600');shade.addColorStop(1,'#080a16ee');ctx.fillStyle=shade;ctx.fillRect(0,280,512,232);ctx.fillStyle='#fff';ctx.font='bold 38px sans-serif';if(opts.title)ctx.fillText(p.name,32,440,448);ctx.font='20px sans-serif';if(opts.info){const ts=p.trackIds.map(byId).filter(Boolean),seconds=ts.reduce((sum,t)=>sum+(Number(t.duration)||0),0);ctx.fillText(`${ts.length} ${ts.length===1?'song':'songs'}${seconds?' · '+Math.floor(seconds/60)+' min':''}`,32,478,448);}}mediaArt.set(key,canvas.toDataURL('image/png'));if(state.queue.playlistId===p.id)context.playback.updateMediaSession();};image.src=coverURL(p);}
     }
-    return {src:mediaArt.get(p.id),type:'image/png'};
+    return {src:mediaArt.get(key),type:'image/png'};
   }
   let selectedOutput=null,outputRevision=0;
   const isHeadphones=label=>/headphones?|headsets?|earphones?|earbuds?|airpods|buds|WH-|WF-|QC[ -]?\d|QuietComfort/i.test(label||'');
@@ -186,5 +202,5 @@ export function createEnhancements(context) {
   window.addEventListener('resize',drawWave);
   audio.addEventListener('play',drawWave);audio.addEventListener('pause',drawWave);audio.addEventListener('timeupdate',()=>{if(!frame)drawWave();});document.addEventListener('visibilitychange',drawWave);
   function importResults(){const report=state.importReport;if(!report)return;context.ui.setModal(context.ui.modalHead('Import results')+`<p>${esc(report.summary)}</p><ul class="import-results">${report.files.map(f=>`<li><strong>${esc(f.name)}</strong><span>${esc(f.reason)}</span></li>`).join('')}</ul>`);}
-  return {coverDialog,chooseCover,saveCover,playlistMediaArt,chooseOutput,renderOutput,drawWave,loadWave,importResults,loadSettings,settingsPanel,updateEqualizer,saveSettings,resetEqualizer,pausePreview};
+  return {saveCoverSettings,coverDialog,chooseCover,saveCover,playlistMediaArt,chooseOutput,renderOutput,drawWave,loadWave,importResults,loadSettings,settingsPanel,updateEqualizer,saveSettings,resetEqualizer,pausePreview};
 }

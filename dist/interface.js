@@ -1,3 +1,4 @@
+import { coverURL, coverText } from './cover-art.js';
 import { createMotion, createPlayerMotion, measureTitleMarquees } from './motion.js';
 import { bindGestures } from './gestures.js';
 import * as db from './storage.js';
@@ -55,12 +56,12 @@ export function createInterface(context) {
     return `<span class="artwork ${extra}">${url ? `<img src="${url}" alt="" loading="lazy">` : icon(fallback)}</span>`;
   }
   function collectionArt(p, extra = '') {
-    if(p?.artwork)return artwork({...p,id:'playlist:'+p.id},extra);
-    // Stable per-playlist folds: different covers without saved image blobs.
-    let seed=0;for(const char of p?.id||'playlist')seed=(Math.imul(seed,31)+char.charCodeAt(0))>>>0;
-    const angle=seed%360,delay=-(seed%190)/10,duration=16+seed%13;
-    return `<span class="artwork playlist-art ${extra}" aria-hidden="true" style="--fold-angle:${angle}deg;--fold-delay:${delay}s;--fold-duration:${duration}s;--fold-x:${25+seed%50}%"><i class="fold-sheet"></i><i class="fold-glint"></i></span>`;
+    if(!p)return artwork(null,extra);
+    const tracks=(p.trackIds||[]).map(byId).filter(Boolean),info=plural(tracks.length,'song')+(totalDuration(tracks)?' · '+totalDuration(tracks):'');
+    const src=p.artwork?artworkURL({...p,id:'playlist:'+p.id}):coverURL(p);
+    return `<span class="artwork playlist-art ${p.artwork?'photo-art':'generated-art'} ${extra}"><img src="${esc(src)}" alt="" loading="lazy">${coverText(p,info)}</span>`;
   }
+
   function route(name, id = '') {
     state.search = ''; $('#searchInput').value = '';
     const hash = `#${name}${id ? '/'+encodeURIComponent(id) : ''}`;
