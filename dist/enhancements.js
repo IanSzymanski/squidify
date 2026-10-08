@@ -1,4 +1,5 @@
-import { COVER_STYLES, coverOptions, coverURL } from './cover-art.js';
+import { createCoverEditor } from './cover-editor.js';
+import { coverDesign, coverOptions, coverURL } from './cover-art.js';
 import { BAND_COUNT, spectrumAt, followLevel, equalizerPoints, equalizerTangents, equalizerMotionBounds, equalizerCanvasHeight, EQ_CONTROLS, EQ_DEFAULTS, normalizeEqualizerSettings } from './spectrum.js';
 import { icon } from './icons.js';
 import * as db from './storage.js';
@@ -6,7 +7,7 @@ import { escapeHTML as esc } from './core.js';
 
 export function createEnhancements(context) {
   const { $, $$, state, audio, byId, playlist, modal, nowDialog } = context;
-  let coverTarget, coverBusy=false, waveGeneration=0, samples=null, sampleDuration=0, frame=0;
+  let waveGeneration=0, samples=null, sampleDuration=0, frame=0;
   let equalizer=normalizeEqualizerSettings(),saveTimer=0,saveChain=Promise.resolve(),previewPaused=false,previewTargets=null,lastFrame=0,settingsRevision=0;
   const valueLabel=(control,value)=>`${value}${control.unit}`;
   async function loadSettings(){equalizer=normalizeEqualizerSettings(await db.setting('equalizer',EQ_DEFAULTS));}
@@ -35,72 +36,29 @@ export function createEnhancements(context) {
   }
   function pausePreview(button){previewPaused=!previewPaused;button.textContent=previewPaused?'Resume preview':'Pause preview';button.setAttribute('aria-pressed',String(previewPaused));drawWave();}
   window.addEventListener('pagehide',()=>{if(saveTimer)saveSettings();});
-  const mediaArt=new Map();
-  const input=document.createElement('input');input.type='file';input.accept='image/jpeg,image/png,image/webp,image/avif';input.hidden=true;
-  document.body.append(input);
-  input.addEventListener('change',async()=>{
-    const file=input.files?.[0];input.value='';state.pickerOpen=false;if(!file)return;
-    try {await saveCover(await normalizeImage(file));}
-    catch(error){context.ui.toast(error.name==='ImageSizeError'?error.message:error.name==='QuotaExceededError'?'Storage is full. The previous cover was kept.':'Could not read this photo. Choose a JPEG, PNG, WebP or AVIF image.',true);}
-  });
-  input.addEventListener('cancel',()=>{state.pickerOpen=false;});
-  async function normalizeImage(file){
-    if(file.size>25*1024*1024)throw Object.assign(new Error('Choose a photo smaller than 25 MB.'),{name:'ImageSizeError'});
-    const url=URL.createObjectURL(file);
-    try {
-      const img=new Image();img.src=url;await img.decode();
-      if(!img.naturalWidth||!img.naturalHeight)throw new Error('Empty image');
-      const size=Math.min(1024,img.naturalWidth,img.naturalHeight),canvas=document.createElement('canvas');canvas.width=canvas.height=size;
-      const ctx=canvas.getContext('2d');const crop=Math.min(img.naturalWidth,img.naturalHeight);
-      ctx.drawImage(img,(img.naturalWidth-crop)/2,(img.naturalHeight-crop)/2,crop,crop,0,0,size,size);
-      return await new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('Image failed')),'image/jpeg',.86));
-    }finally{URL.revokeObjectURL(url);}
-  }
-  function coverDialog(kind,id){
-    coverTarget={kind,id};
-    context.ui.setModal(context.ui.modalHead(kind==='playlist'?'Playlist settings':'Cover photo')+`${kind==='playlist'?coverSettings(playlist(id)):''}<p>Choose a photo for this ${kind}. It will be cropped to a square.</p><p class="small-note">JPEG, PNG, WebP or AVIF · up to 25 MB. Saved at up to 1024 × 1024 pixels and counted in the same device storage as your music.</p><div class="modal-actions"><button class="button" data-action="remove-cover">Use default artwork</button><button class="button primary" data-action="choose-cover">Choose photo</button></div>`);
-  }
-  function coverSettings(p){
-    if(!p)return '';const opts=coverOptions(p);
-    return `<form id="coverSettingsForm" data-id="${esc(p.id)}"><div class="cover-preview">${context.ui.collectionArt(p)}</div><label for="coverStyle">Artwork style</label><select class="text-input" id="coverStyle" name="style"><option value="" ${p.coverStyle==null?'selected':''}>Automatic</option>${COVER_STYLES.map((name,i)=>`<option value="${i}" ${Number(p.coverStyle)===i&&p.coverStyle!=null?'selected':''}>${name}</option>`).join('')}</select><button type="button" class="button" data-action="vary-cover" data-id="${esc(p.id)}">New variation</button><label class="cover-toggle"><input name="title" type="checkbox" ${opts.title?'checked':''}>Show playlist name</label><label class="cover-toggle"><input name="info" type="checkbox" ${opts.info?'checked':''}>Show song count and duration</label><div class="modal-actions"><button class="button primary" type="submit">Save cover settings</button></div></form>`;
-  }
-  function coverDraft(form){return {coverStyle:form.elements.style.value===''?null:Number(form.elements.style.value),coverTitle:form.elements.title.checked,coverInfo:form.elements.info.checked};}
-  document.addEventListener('change',event=>{const form=event.target.closest?.('#coverSettingsForm');if(!form)return;const p=playlist(form.dataset.id);if(p)form.querySelector('.cover-preview').innerHTML=context.ui.collectionArt({...p,...coverDraft(form)});});
-  async function saveCoverSettings(form,vary=false){
-    const p=playlist(form.dataset.id);if(!p)return;
-    const next={...p,...coverDraft(form),coverVariation:(Number(p.coverVariation)||0)+(vary?1:0)};
-    await db.put('playlists',next);Object.assign(p,next);mediaArt.delete(p.id);
-    context.ui.render();if(nowDialog.open)context.ui.renderNowPlaying();context.playback.updateMediaSession();
-    if(vary)coverDialog('playlist',p.id);else{modal.close();context.ui.toast('Cover settings saved.');}
-  }
-  function chooseCover(){if(coverBusy)return;state.pickerOpen=true;input.click();}
-  async function saveCover(blob){
-    if(!coverTarget||coverBusy)return;coverBusy=true;
-    try{
-      const {kind,id}=coverTarget;
-      if(kind==='playlist'){
-        const p=playlist(id);if(!p)throw new Error('Playlist removed');
-        const next={...p,artwork:blob};await db.put('playlists',next);Object.assign(p,next);
-        context.ui.releaseArtwork('playlist:'+id);mediaArt.delete(id);
-      }else{
-        const tracks=[...state.tracks.values()].filter(t=>`${t.album}\u241f${t.artist}`===id);
-        const next=tracks.map(t=>({...t,originalArtwork:t.originalArtwork===undefined?t.artwork:t.originalArtwork,artwork:blob||(t.originalArtwork===undefined?t.artwork:t.originalArtwork)||null}));
-        await db.putTracks(next);
-        for(const t of next){state.tracks.set(t.id,t);context.ui.releaseArtwork(t.id);}
-      }
-      state.storage=await db.storageInfo();modal.close();context.ui.render();if(nowDialog.open)context.ui.renderNowPlaying();context.playback.updateMediaSession();context.ui.toast(blob?'Cover photo saved.':'Default artwork restored.');
-    }finally{coverBusy=false;}
-  }
+  const mediaArt=new Map();let mediaArtEpoch=0;
+  const {coverDialog,saveCoverSettings,chooseCover,saveCover}=createCoverEditor(context,()=>{mediaArtEpoch++;mediaArt.clear();});
   function playlistMediaArt(p){
-    if(p.artwork)return {src:context.ui.artworkURL({...p,id:'playlist:'+p.id}),type:p.artwork.type};
-    const key=JSON.stringify([p.id,p.name,p.trackIds,p.coverStyle,p.coverVariation,p.coverTitle,p.coverInfo,p.trackIds.map(byId).map(t=>t?.duration)]);
+    const key=JSON.stringify([p.id,p.name,p.trackIds,p.coverStyle,p.coverVariation,p.coverTitle,p.coverInfo,p.coverDesign,p.trackIds.map(byId).map(t=>t?.duration)]);
     if(!mediaArt.has(key)){
-      let seed=0;for(const c of p.id)seed=(Math.imul(seed,31)+c.charCodeAt(0))>>>0;
       const canvas=document.createElement('canvas');canvas.width=canvas.height=512;const ctx=canvas.getContext('2d');if(!ctx)return null;
-      const angle=(seed%360)*Math.PI/180;ctx.translate(256,256);ctx.rotate(angle);const grad=ctx.createLinearGradient(-360,-240,360,240);
-      [[0,'#070914'],[.16,'#12352f'],[.3,'#0eedb5'],[.32,'#d3fff1'],[.34,'#219882'],[.45,'#0d182f'],[.62,'#ae00ff'],[.65,'#ebc8ff'],[.67,'#510b76'],[.85,'#4497af'],[1,'#070914']].forEach(([at,color])=>grad.addColorStop(at,color));
-      ctx.fillStyle=grad;ctx.fillRect(-370,-370,740,740);if(mediaArt.size>32)mediaArt.clear();mediaArt.set(key,canvas.toDataURL('image/png'));
-      if(typeof Image==='function'){const image=new Image();image.onload=()=>{ctx.setTransform(1,0,0,1,0,0);ctx.drawImage(image,0,0,512,512);const opts=coverOptions(p);if(opts.title||opts.info){const shade=ctx.createLinearGradient(0,300,0,512);shade.addColorStop(0,'#080a1600');shade.addColorStop(1,'#080a16ee');ctx.fillStyle=shade;ctx.fillRect(0,280,512,232);ctx.fillStyle='#fff';ctx.font='bold 38px sans-serif';if(opts.title)ctx.fillText(p.name,32,440,448);ctx.font='20px sans-serif';if(opts.info){const ts=p.trackIds.map(byId).filter(Boolean),seconds=ts.reduce((sum,t)=>sum+(Number(t.duration)||0),0);ctx.fillText(`${ts.length} ${ts.length===1?'song':'songs'}${seconds?' · '+Math.floor(seconds/60)+' min':''}`,32,478,448);}}mediaArt.set(key,canvas.toDataURL('image/png'));if(state.queue.playlistId===p.id)context.playback.updateMediaSession();};image.src=coverURL(p);}
+      const design=coverDesign(p);ctx.fillStyle=design.colors[2];ctx.fillRect(0,0,512,512);
+      if(mediaArt.size>32)mediaArt.clear();mediaArt.set(key,canvas.toDataURL('image/png'));
+      if(typeof Image==='function'){
+        const epoch=mediaArtEpoch,image=new Image();image.onload=()=>{
+          if(epoch!==mediaArtEpoch)return;
+          const fit=Math.max(512/image.naturalWidth,512/image.naturalHeight),w=image.naturalWidth*fit,h=image.naturalHeight*fit;
+          ctx.save();ctx.translate(256,256);ctx.scale(p.artwork?design.imageScale/100:1,p.artwork?design.imageScale/100:1);ctx.translate(-256,-256);
+          ctx.drawImage(image,(512-w)*design.imageX/100,(512-h)*design.imageY/100,w,h);ctx.restore();
+          const opts=coverOptions(p);if(opts.title||opts.info){
+            const base=design.textPosition==='top'?65:design.textPosition==='center'?245:440;
+            ctx.fillStyle='#080a1699';ctx.fillRect(0,base-52,512,110);ctx.fillStyle='#fff';ctx.font='bold 38px sans-serif';if(opts.title)ctx.fillText(p.name,32,base,448);
+            ctx.font='20px sans-serif';if(opts.info){const ts=p.trackIds.map(byId).filter(Boolean),seconds=ts.reduce((sum,t)=>sum+(Number(t.duration)||0),0);ctx.fillText(`${ts.length} ${ts.length===1?'song':'songs'}${seconds?' · '+Math.floor(seconds/60)+' min':''}`,32,base+38,448);}
+          }
+          if(!mediaArt.has(key))return;mediaArt.set(key,canvas.toDataURL('image/png'));context.playback.updateMediaSession();
+        };
+        image.src=p.artwork?context.ui.artworkURL({...p,id:'playlist:'+p.id}):coverURL(p);
+      }
     }
     return {src:mediaArt.get(key),type:'image/png'};
   }

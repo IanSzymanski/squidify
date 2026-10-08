@@ -1,4 +1,4 @@
-import { coverURL, coverText } from './cover-art.js';
+import { coverURL, coverText, coverDesign, coverImages, coverPresentation } from './cover-art.js';
 import { createMotion, createPlayerMotion, measureTitleMarquees } from './motion.js';
 import { bindGestures } from './gestures.js';
 import * as db from './storage.js';
@@ -48,6 +48,7 @@ export function createInterface(context) {
     $$('[data-mark]', root).forEach(el => { el.innerHTML = mark; });
   }
   function artwork(track, extra = '', fallback = 'music') {
+    if(track?.albumCover)return collectionArt(albumArtModel(track),extra);
     let url;
     if (track?.artwork) {
       url = artworkURLs.get(track.id);
@@ -55,11 +56,12 @@ export function createInterface(context) {
     }
     return `<span class="artwork ${extra}">${url ? `<img src="${url}" alt="" loading="lazy">` : icon(fallback)}</span>`;
   }
+  function albumArtModel(t){return {...t,...t.albumCover,id:'album:'+albumKey(t),name:t.album,trackIds:trackArray().filter(x=>albumKey(x)===albumKey(t)).map(x=>x.id)};}
   function collectionArt(p, extra = '') {
     if(!p)return artwork(null,extra);
     const tracks=(p.trackIds||[]).map(byId).filter(Boolean),info=plural(tracks.length,'song')+(totalDuration(tracks)?' · '+totalDuration(tracks):'');
-    const src=p.artwork?artworkURL({...p,id:'playlist:'+p.id}):coverURL(p);
-    return `<span class="artwork playlist-art ${p.artwork?'photo-art':'generated-art'} ${extra}"><img src="${esc(src)}" alt="" loading="lazy">${coverText(p,info)}</span>`;
+    const src=p.coverPreviewURL||(p.artwork?artworkURL({...p,id:'playlist:'+p.id}):null),design=coverDesign(p);
+    return `<span class="artwork playlist-art ${p.artwork?'photo-art':'generated-art'} ${extra} motion-${design.motion}" style="${coverPresentation(p)}">${src?`<img src="${esc(src)}" alt="" loading="lazy">`:coverImages(p)}${coverText(p,info)}</span>`;
   }
 
   function route(name, id = '') {
@@ -383,6 +385,6 @@ export function createInterface(context) {
 
   function outputControl(){return `<button class="icon-button output-control" data-action="audio-output" aria-label="Audio output — managed by your device" title="Audio output">${icon('bluetooth')}</button>`;}
   function playerArtwork(t,extra=''){const p=playlist(state.queue.playlistId);return p?collectionArt(p,extra):artwork(t,extra);}
-  function mediaArtwork(){const p=playlist(state.queue.playlistId);return p?context.enhancements.playlistMediaArt(p):null;}
+  function mediaArtwork(){const p=playlist(state.queue.playlistId);const t=byId(state.queue.current);return p?context.enhancements.playlistMediaArt(p):t?.albumCover?context.enhancements.playlistMediaArt(albumArtModel(t)):null;}
   return { motion, outputControl, mediaArtwork, toast, report, paintIcons, collectionArt, route, readRoute, currentList, viewKey, contextName, header, render, setModal, modalHead, positionMenu, addMusicDialog, highlightCurrent, renderPlayer, updateProgress, renderNowPlaying, renderQueue, renderOfflineBadge, releaseArtwork, artworkURL, bindEvents, actions };
 }
