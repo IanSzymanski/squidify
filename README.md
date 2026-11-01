@@ -25,6 +25,17 @@ The shell is cached by a service worker. A secure origin (HTTPS, or localhost fo
 - Responsive phone layout, full-screen now playing, accessible labels, keyboard controls
 - Storage estimate and persistent storage request; offline status verified against all shell assets
 - YouTube import through a self-hosted converter (Offline & settings): single videos or whole playlists, saved like any imported file
+- Download song / Download playlist: save audio from this device's library as files, only when asked
+
+### Downloading songs and playlists (v39)
+
+**Download song** (song options) and **Download playlist** (playlist options) save audio files from this device's library. Nothing is saved automatically. Files are named "Artist - Title" in their stored format (MP3, M4A and so on), with names that are safe on Windows, macOS and phones; duplicate names in a playlist get " (2)".
+
+- **Chrome or Edge on a computer:** a save dialog for a song, or a folder picker for a playlist. Both start in the connected music folder when there is one. A playlist gets its own subfolder plus an `.m3u8` list; files already there are never overwritten, and saving can be stopped.
+- **iPhone and Android:** the share sheet, where **Save to Files** (or **Save**) puts the files in a folder you choose. The sheet opens straight from the **Save** tap, because phones only allow it from a tap; playlists are shared in parts of 20 files.
+- **Other browsers:** ordinary downloads to the browser's download folder.
+
+Songs whose audio is missing on this device are skipped and counted. **Export playlist (list only)** still exports just the M3U list.
 
 ### YouTube playlists and original audio (v38)
 
@@ -137,6 +148,7 @@ saved records and a paused session, and registers browser tools.
 | `interface.js` | Views, dialogs, artwork URLs, routing, and delegated UI events |
 | `import.js` | File/folder selection, rescans, deduplication, imports, and duration probes |
 | `playlists.js` | Playlist and liked-song operations, forms, export, and playlist tool execution |
+| `downloads.js` | Saving songs and playlists as files: folder pickers, the share sheet, or browser downloads |
 | `playback.js` | Audio lifecycle, queue actions, media URLs, Media Session, and session saving |
 | `offline.js` | Service-worker registration and offline-readiness checks |
 | `storage.js` | Existing IndexedDB schema and transactions, unchanged by SQ-001 |

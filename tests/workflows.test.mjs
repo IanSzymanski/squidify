@@ -126,7 +126,7 @@ test('playback reports retain background events locally with bounded history and
   await app.mediaActions.play();app.setHidden(true);app.emitDocument('visibilitychange',{});audio.pause();
   app.setHidden(false);app.emitDocument('visibilitychange',{});app.actions['playback-report']();await app.actions['copy-playback-report']();
   const report=JSON.parse(copied);assert.ok(report.events.some(x=>x.event==='hidden'));assert.ok(report.events.some(x=>x.event==='pause'&&x.hidden));
-  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v38');
+  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v39');
   for(let i=0;i<100;i++)audio.emit('stalled');await app.actions['copy-playback-report']();assert.equal(JSON.parse(copied).events.length,80);
   const reopened=await mediaFixture(t,{localStorage,clipboard:{writeText:async value=>{copied=value;}}});await reopened.actions['copy-playback-report']();
   assert.ok(JSON.parse(copied).events.some(x=>x.event==='stalled'));assert.ok(values.size);
@@ -557,6 +557,8 @@ async function harness(t,db=memoryStore(),mediaOptions={}){
   if(mediaOptions.mediaDevices)navigator.mediaDevices=mediaOptions.mediaDevices;
   if(mediaOptions.audioSession)navigator.audioSession=mediaOptions.audioSession;
   if(mediaOptions.clipboard)navigator.clipboard=mediaOptions.clipboard;
+  if(mediaOptions.share)Object.assign(navigator,mediaOptions.share);
+  if(mediaOptions.pickers)Object.assign(window,mediaOptions.pickers);
   if(mediaOptions.stateThrows)Object.defineProperty(mediaSession,'playbackState',{set(){throw new Error('Unsupported state');}});
   const context=vm.createContext({document,window,navigator,location,localStorage:mediaOptions.localStorage,URL,Blob,File,TextEncoder,TextDecoder,DOMException,DataView,Uint8Array,ArrayBuffer,fetch:mediaOptions.fetch,crypto:{subtle:webcrypto.subtle,randomUUID},Audio:FakeAudio,MediaMetadata:class{constructor(value){Object.assign(this,value);}},AbortController,FormData,setInterval:(fn,ms)=>{const timer=setInterval(fn,ms);timers.add(timer);return timer;},clearInterval,matchMedia:()=>({matches:false}),console:{error(){}},setTimeout:(f,ms)=>{const timer=setTimeout(f,ms);timers.add(timer);return timer;},clearTimeout:id=>{clearTimeout(id);timers.delete(id);}});
   if(mediaOptions.Image)context.Image=mediaOptions.Image;
@@ -688,6 +690,64 @@ test('a video opened from a playlist can be converted on its own, and Mix links 
   const listings=callsTo(service,'/api/playlist');
   app.converter.setURL('https://www.youtube.com/watch?v=aaaaaaaaaaa&list=RDaaaaaaaaaaa');await app.converter.submit();
   assert.equal(callsTo(service,'/api/playlist'),listings,'Mix links are never listed');assert.equal(app.state.tracks.size,6);
+});
+// A folder handle like the File System Access API's, kept in memory.
+function memoryFolder(name='Music'){
+  const files=new Map(),folders=new Map();
+  return {kind:'directory',name,files,folders,
+    async getDirectoryHandle(child,{create}={}){if(!folders.has(child)){if(!create)throw new DOMException('Not found','NotFoundError');folders.set(child,memoryFolder(child));}return folders.get(child);},
+    async getFileHandle(child,{create}={}){if(!files.has(child)&&!create)throw new DOMException('Not found','NotFoundError');return {kind:'file',name:child,createWritable:async()=>{const parts=[];return {write:async data=>{parts.push(data);},close:async()=>{files.set(child,new Blob(parts));},abort:async()=>{}};}};}};
+}
+async function downloadFixture(t,options){
+  const app=await mediaFixture(t,options);
+  const p={id:'trip',name:'Road / trip',trackIds:['a','b','c'],color:'purple',createdAt:1};await app.db.put('playlists',p);app.state.playlists.push(p);
+  return app;
+}
+const plainCopy=value=>JSON.parse(JSON.stringify(value));
+test('on a computer, Download playlist saves into a picked folder: its own subfolder, an M3U list, nothing overwritten',async t=>{
+  const music=memoryFolder(),requests=[];
+  const app=await downloadFixture(t,{pickers:{showDirectoryPicker:async options=>{requests.push(options);return music;}}});
+  (await music.getDirectoryHandle('Road trip',{create:true})).files.set('Artist b - Song b.mp3',new Blob(['mine']));
+  await app.actions['download-playlist']({dataset:{id:'trip'}});
+  assert.equal(requests[0].mode,'readwrite');assert.equal(requests[0].id,'squidify-downloads');
+  const folder=music.folders.get('Road trip');
+  assert.deepEqual([...folder.files.keys()].sort(),['Artist a - Song a.mp3','Artist b - Song b.mp3','Artist c - Song c.mp3','Road trip.m3u8']);
+  assert.equal(await folder.files.get('Artist a - Song a.mp3').text(),'a');
+  assert.equal(await folder.files.get('Artist b - Song b.mp3').text(),'mine','a file that is already there is never overwritten');
+  assert.match(await folder.files.get('Road trip.m3u8').text(),/^#EXTM3U\n#EXTINF:120,Artist a - Song a\nArtist a - Song a\.mp3\n/);
+  assert.match(app.element('#toast').textContent,/2 songs saved to Music\/Road trip · 1 already there/);
+  assert.equal(app.element('#modal').open,false);
+  const cancelled=await downloadFixture(t,{pickers:{showDirectoryPicker:async()=>{throw new DOMException('Cancelled','AbortError');}}});
+  await cancelled.actions['download-playlist']({dataset:{id:'trip'}});
+});
+test('on a computer, Download song asks where to save it, starting in the connected music folder',async t=>{
+  const requests=[];let written;
+  const app=await downloadFixture(t,{pickers:{showSaveFilePicker:async options=>{requests.push(options);if(requests.length===1)throw new TypeError('That folder is gone');return {name:options.suggestedName,createWritable:async()=>({write:async data=>{written=data;},close:async()=>{}})};}}});
+  const connected={kind:'directory',name:'My music'};app.state.folders.push({id:'f',name:'My music',handle:connected});
+  await app.actions['download-track']({dataset:{id:'a'}});
+  assert.equal(requests[0].startIn,connected);assert.equal(requests[1].startIn,undefined,'a stale connected folder falls back to the default location');
+  assert.equal(requests[1].suggestedName,'Artist a - Song a.mp3');assert.equal(await written.text(),'a');assert.equal(written.type,'audio/mpeg');
+  assert.match(app.element('#toast').textContent,/Saved Artist a - Song a\.mp3/);
+});
+test('on a phone, Download playlist opens the share sheet only from the Save tap, in parts of 20',async t=>{
+  const shared=[];
+  const app=await downloadFixture(t,{share:{maxTouchPoints:5,canShare:({files})=>files.every(file=>file.type.startsWith('audio/')),share:({files})=>{shared.push(files.map(file=>file.name));return Promise.resolve();}}});
+  for(let i=0;i<22;i++){const id='x'+i,track={id,title:'Same',artist:'Band',album:'B',duration:60,name:'same.m4a',mime:'audio/mp4'};await app.db.saveTrack(track,new Blob([id],{type:'audio/mp4'}));app.state.tracks.set(id,track);app.state.playlists[0].trackIds.push(id);}
+  await app.actions['download-playlist']({dataset:{id:'trip'}});
+  assert.equal(shared.length,0,'nothing is shared until the Save tap');assert.match(app.element('#modal').innerHTML,/part 1 of 2/);
+  const first=app.actions['download-share']();assert.equal(shared.length,1,'the share sheet opens within the tap');await first;
+  assert.equal(shared[0].length,20);assert.deepEqual(plainCopy(shared[0].slice(0,5)),['Artist a - Song a.mp3','Artist b - Song b.mp3','Artist c - Song c.mp3','Band - Same.m4a','Band - Same (2).m4a']);
+  assert.match(app.element('#modal').innerHTML,/part 2 of 2/);
+  await app.actions['download-share']();assert.equal(shared[1].length,5);assert.equal(shared[1].at(-1),'Band - Same (22).m4a');
+  assert.equal(app.element('#modal').open,false);assert.match(app.element('#toast').textContent,/25 songs shared/);
+});
+test('other browsers get ordinary downloads, and missing audio is reported',async t=>{
+  const app=await downloadFixture(t);
+  await app.actions['download-track']({dataset:{id:'b'}});await new Promise(resolve=>setTimeout(resolve,20));
+  const link=app.createdElements.find(element=>element.download);
+  assert.equal(link.download,'Artist b - Song b.mp3');assert.equal(link.clicks,1);assert.match(link.href,/^blob:/);
+  await app.db.remove('media','c');await app.actions['download-track']({dataset:{id:'c'}});
+  assert.match(app.element('#toast').textContent,/missing on this device/);assert.equal(app.element('#toast').classList.contains('error'),true);
 });
 test('playlist mix entry replaces duplicate search; ordered rows support dragging and saves are atomic',async t=>{
   const app=await mediaFixture(t);await app.db.put('playlists',{id:'p',name:'Night mix',trackIds:['a','b','c'],mix:{version:1,clips:{a:{in:12}},transitions:{}}});
@@ -844,16 +904,16 @@ test('installed-update toast is shown once, only for the running ready release',
   await app.offline.announceInstalled('squidify-shell-v5',true);
   assert.equal(app.element('#toast').hidden,true);
   assert.equal(app.db.stores.settings.has('installedShellVersion'),false);
-  await Promise.all([app.offline.announceInstalled('squidify-shell-v38',true),app.offline.announceInstalled('squidify-shell-v38',true)]);
+  await Promise.all([app.offline.announceInstalled('squidify-shell-v39',true),app.offline.announceInstalled('squidify-shell-v39',true)]);
   assert.match(app.element('#toast').textContent,/Squidify updated/);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v38');
-  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v38',true);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v39');
+  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v39',true);
   assert.equal(reopened.element('#toast').hidden,true);
 });
 test('a first install records its release without claiming an update',async t=>{
-  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v38',false);
+  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v39',false);
   assert.equal(app.element('#toast').hidden,true);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v38');
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v39');
 });
 
 

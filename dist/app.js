@@ -9,6 +9,7 @@ import { createPlayback } from './playback.js';
 import { createOffline } from './offline.js';
 import { createMixEditor } from './mix-editor.js';
 import { createConverter } from './converter.js';
+import { createDownloads } from './downloads.js';
 
 // Wire stable API objects before any callbacks run. Modules never import each
 // other, and each owns its timers, event listeners, and temporary resources.
@@ -22,11 +23,12 @@ Object.assign(context.offline, createOffline(context));
 context.enhancements = createEnhancements(context);
 context.mixEditor = createMixEditor(context);
 context.converter = createConverter(context);
+context.downloads = createDownloads(context);
 const { state, audio, main, trackArray } = context;
 const { paintIcons, readRoute, header, toast } = context.ui;
 const { loadTrack } = context.playback;
 const { setupOffline } = context.offline;
-const actions = Object.assign({}, context.ui.actions, context.importer.actions, context.playlists.actions, context.playback.actions, context.mixEditor.actions, context.converter.actions);
+const actions = Object.assign({}, context.ui.actions, context.importer.actions, context.playlists.actions, context.playback.actions, context.mixEditor.actions, context.converter.actions, context.downloads.actions);
 context.ui.bindEvents(actions);
 context.importer.bindEvents();
 context.playlists.bindEvents();
