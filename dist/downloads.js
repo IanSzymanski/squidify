@@ -3,7 +3,7 @@ import { escapeHTML as esc, formatBytes } from './core.js';
 import { icon } from './icons.js';
 
 // Saves songs from this device's library as audio files, only when asked:
-// - Chrome and Edge on a computer: into a folder you pick (a playlist gets its own subfolder and an .m3u8).
+// - Chrome and Edge on a computer: into a folder you pick (a playlist gets its own subfolder).
 // - iPhone and Android: through the share sheet's "Save to Files" / "Save", choosing the folder there.
 // - Other browsers: as ordinary downloads.
 const EXTENSIONS={'audio/mpeg':'mp3','audio/mp4':'m4a','audio/aac':'aac','audio/flac':'flac','audio/wav':'wav','audio/ogg':'ogg','audio/opus':'opus','audio/webm':'webm','audio/aiff':'aiff'};
@@ -63,7 +63,6 @@ export function createDownloads(context){
     catch(error){await writable.abort?.().catch(()=>{});throw error;}
   }
   async function exists(folder,name){try{await folder.getFileHandle(name);return true;}catch{return false;}}
-  const m3u=items=>'#EXTM3U\n'+items.map(({track,file})=>`#EXTINF:${Math.round(track.duration||-1)},${`${track.artist||''} - ${track.title||''}`.replace(/[\r\n]/g,' ')}\n${file.name}`).join('\n')+'\n';
   const missingNote=missing=>missing.length?` · ${plural(missing.length,'song')} not on this device`:'';
   function browserDownload(items,missing){
     items.forEach(({file},index)=>setTimeout(()=>{
@@ -130,7 +129,6 @@ export function createDownloads(context){
           if(await exists(folder,file.name)){kept++;continue;}
           await write(await folder.getFileHandle(file.name,{create:true}),file);saved++;
         }
-        await write(await folder.getFileHandle(`${name}.m3u8`,{create:true}),new Blob([m3u(items)],{type:'audio/x-mpegurl'}));
       }finally{
         const stopped=saving.stop;saving=null;modal.close();
         toast(`${plural(saved,'song')} saved to ${root.name}/${folder.name}${kept?` · ${kept} already there`:''}${missingNote(missing)}${stopped?' · stopped':''}.`,!!missing.length,8000);

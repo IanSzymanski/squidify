@@ -27,11 +27,11 @@ The shell is cached by a service worker. A secure origin (HTTPS, or localhost fo
 - YouTube import through a self-hosted converter (Offline & settings): single videos or whole playlists, saved like any imported file
 - Download song / Download playlist: save audio from this device's library as files, only when asked
 
-### Downloading songs and playlists (v39)
+### Downloading songs and playlists (v40)
 
 **Download song** (song options) and **Download playlist** (playlist options) save audio files from this device's library. Nothing is saved automatically. Files are named "Artist - Title" in their stored format (MP3, M4A and so on), with names that are safe on Windows, macOS and phones; duplicate names in a playlist get " (2)".
 
-- **Chrome or Edge on a computer:** a save dialog for a song, or a folder picker for a playlist. Both start in the connected music folder when there is one. A playlist gets its own subfolder plus an `.m3u8` list; files already there are never overwritten, and saving can be stopped.
+- **Chrome or Edge on a computer:** a save dialog for a song, or a folder picker for a playlist. Both start in the connected music folder when there is one. A playlist's songs go in their own subfolder (audio files only); files already there are never overwritten, and saving can be stopped.
 - **iPhone and Android:** the share sheet, where **Save to Files** (or **Save**) puts the files in a folder you choose. The sheet opens straight from the **Save** tap, because phones only allow it from a tap; playlists are shared in parts of 20 files.
 - **Other browsers:** ordinary downloads to the browser's download folder.
 

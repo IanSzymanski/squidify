@@ -126,7 +126,7 @@ test('playback reports retain background events locally with bounded history and
   await app.mediaActions.play();app.setHidden(true);app.emitDocument('visibilitychange',{});audio.pause();
   app.setHidden(false);app.emitDocument('visibilitychange',{});app.actions['playback-report']();await app.actions['copy-playback-report']();
   const report=JSON.parse(copied);assert.ok(report.events.some(x=>x.event==='hidden'));assert.ok(report.events.some(x=>x.event==='pause'&&x.hidden));
-  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v39');
+  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v40');
   for(let i=0;i<100;i++)audio.emit('stalled');await app.actions['copy-playback-report']();assert.equal(JSON.parse(copied).events.length,80);
   const reopened=await mediaFixture(t,{localStorage,clipboard:{writeText:async value=>{copied=value;}}});await reopened.actions['copy-playback-report']();
   assert.ok(JSON.parse(copied).events.some(x=>x.event==='stalled'));assert.ok(values.size);
@@ -704,17 +704,16 @@ async function downloadFixture(t,options){
   return app;
 }
 const plainCopy=value=>JSON.parse(JSON.stringify(value));
-test('on a computer, Download playlist saves into a picked folder: its own subfolder, an M3U list, nothing overwritten',async t=>{
+test('on a computer, Download playlist saves just the songs into a picked folder, in their own subfolder, overwriting nothing',async t=>{
   const music=memoryFolder(),requests=[];
   const app=await downloadFixture(t,{pickers:{showDirectoryPicker:async options=>{requests.push(options);return music;}}});
   (await music.getDirectoryHandle('Road trip',{create:true})).files.set('Artist b - Song b.mp3',new Blob(['mine']));
   await app.actions['download-playlist']({dataset:{id:'trip'}});
   assert.equal(requests[0].mode,'readwrite');assert.equal(requests[0].id,'squidify-downloads');
   const folder=music.folders.get('Road trip');
-  assert.deepEqual([...folder.files.keys()].sort(),['Artist a - Song a.mp3','Artist b - Song b.mp3','Artist c - Song c.mp3','Road trip.m3u8']);
+  assert.deepEqual([...folder.files.keys()].sort(),['Artist a - Song a.mp3','Artist b - Song b.mp3','Artist c - Song c.mp3'],'audio files only: no playlist list to mistake for a song');
   assert.equal(await folder.files.get('Artist a - Song a.mp3').text(),'a');
   assert.equal(await folder.files.get('Artist b - Song b.mp3').text(),'mine','a file that is already there is never overwritten');
-  assert.match(await folder.files.get('Road trip.m3u8').text(),/^#EXTM3U\n#EXTINF:120,Artist a - Song a\nArtist a - Song a\.mp3\n/);
   assert.match(app.element('#toast').textContent,/2 songs saved to Music\/Road trip · 1 already there/);
   assert.equal(app.element('#modal').open,false);
   const cancelled=await downloadFixture(t,{pickers:{showDirectoryPicker:async()=>{throw new DOMException('Cancelled','AbortError');}}});
@@ -904,16 +903,16 @@ test('installed-update toast is shown once, only for the running ready release',
   await app.offline.announceInstalled('squidify-shell-v5',true);
   assert.equal(app.element('#toast').hidden,true);
   assert.equal(app.db.stores.settings.has('installedShellVersion'),false);
-  await Promise.all([app.offline.announceInstalled('squidify-shell-v39',true),app.offline.announceInstalled('squidify-shell-v39',true)]);
+  await Promise.all([app.offline.announceInstalled('squidify-shell-v40',true),app.offline.announceInstalled('squidify-shell-v40',true)]);
   assert.match(app.element('#toast').textContent,/Squidify updated/);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v39');
-  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v39',true);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v40');
+  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v40',true);
   assert.equal(reopened.element('#toast').hidden,true);
 });
 test('a first install records its release without claiming an update',async t=>{
-  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v39',false);
+  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v40',false);
   assert.equal(app.element('#toast').hidden,true);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v39');
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v40');
 });
 
 
