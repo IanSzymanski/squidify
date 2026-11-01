@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Assets only: no Worker script runs. dist/ is served as-is; there is no build step.
+  "name": "squidify",
+  "compatibility_date": "2026-10-20",
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./dist"
+  },
+  "env": {
+    // A separate origin, so a new shell can be tried on a phone without updating the installed app.
+    "qa": {
+      "name": "squidify-qa",
+      "workers_dev": true,
+      "preview_urls": false,
+      "assets": {
+        "directory": "./dist"
+      }
+    }
+  }
+}

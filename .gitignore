@@ -1,3 +1,7 @@
-.sites-runtime/
 node_modules/
+.wrangler/
+.dev.vars
+.dev.vars.*
+test-results/
+.sites-runtime/
 *.tar.gz
