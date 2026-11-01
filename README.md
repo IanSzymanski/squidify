@@ -24,6 +24,15 @@ The shell is cached by a service worker. A secure origin (HTTPS, or localhost fo
 - Queue add/play next, jump, remove/reorder, save as playlist
 - Responsive phone layout, full-screen now playing, accessible labels, keyboard controls
 - Storage estimate and persistent storage request; offline status verified against all shell assets
+- YouTube import through a self-hosted converter (Offline & settings): single videos or whole playlists, saved like any imported file
+
+### YouTube playlists and original audio (v38)
+
+A YouTube playlist link is listed first (title, number of videos, private or deleted ones skipped) and converted only after **Convert all**. A link to a video opened inside a playlist also offers **Just this video**; Mix links (`list=RD…`) never end, so they convert only the video. Videos convert one at a time with a short gap, each through the same import path as before (duplicates are recognised), and by default fill a new Squidify playlist with the YouTube playlist's name in its order. Progress is saved after every video: if the page closes or the connection drops, **Resume playlist** continues from the same video without converting finished ones again. **Stop playlist** keeps the songs and playlist made so far. Videos that cannot be converted are listed with the reason at the end.
+
+Conversion runs in the page, so on an iPhone it pauses while Squidify is in the background. The converter must offer the `playlists` feature (it says so in `/api/health`); an older one gets a message to update it.
+
+The converter may now send YouTube's original AAC audio as an `.m4a` instead of a re-encoded MP3. The client accepts `audio/mp4` only when the bytes are an MP4 file, names it `.m4a`, and the importer reads its title and artist tags. The JSON response limit rose to 1 MiB for long playlists.
 
 ## Equalizer tuning
 
