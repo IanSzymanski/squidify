@@ -359,3 +359,11 @@ html.page-hidden .generated-art>img{animation-play-state:paused}
 @media(prefers-reduced-motion:reduce){.playlist-art>img{animation:none!important}}
 html.page-hidden .playlist-art>img{animation-play-state:paused}
 .sidebar-playlist .playlist-art>img,.playlist-picker .playlist-art>img{animation:none}
+.converter-batch{margin-top:20px;display:flex;flex-direction:column;gap:6px}
+.converter-batch>div{display:flex;justify-content:space-between;gap:12px;font-size:13px}
+.converter-batch>div span,.converter-batch small{color:var(--muted);font-size:12px;white-space:nowrap}
+.converter-batch progress{width:100%;height:5px;accent-color:var(--accent)}
+.converter-card label.converter-check{display:flex;align-items:center;gap:8px;margin:4px 0;color:var(--text);font-size:13px}
+.converter-failures summary{cursor:pointer;font-size:12px;color:#ffc3b8}
+.converter-failures ul{margin:8px 0 0;padding-left:18px;font-size:12px;display:flex;flex-direction:column;gap:6px}
+.converter-failures li span{display:block;color:var(--muted);overflow-wrap:anywhere}

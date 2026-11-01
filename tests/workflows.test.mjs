@@ -126,7 +126,7 @@ test('playback reports retain background events locally with bounded history and
   await app.mediaActions.play();app.setHidden(true);app.emitDocument('visibilitychange',{});audio.pause();
   app.setHidden(false);app.emitDocument('visibilitychange',{});app.actions['playback-report']();await app.actions['copy-playback-report']();
   const report=JSON.parse(copied);assert.ok(report.events.some(x=>x.event==='hidden'));assert.ok(report.events.some(x=>x.event==='pause'&&x.hidden));
-  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v37');
+  assert.doesNotMatch(copied,/Song a|Artist a|blob:|"trackId"/);assert.equal(report.release,'v38');
   for(let i=0;i<100;i++)audio.emit('stalled');await app.actions['copy-playback-report']();assert.equal(JSON.parse(copied).events.length,80);
   const reopened=await mediaFixture(t,{localStorage,clipboard:{writeText:async value=>{copied=value;}}});await reopened.actions['copy-playback-report']();
   assert.ok(JSON.parse(copied).events.some(x=>x.event==='stalled'));assert.ok(values.size);
@@ -618,6 +618,77 @@ test('cancelling a pending conversion ignores its late response and never import
   await app.converter.cancel();release(new Response(JSON.stringify({status:'ready',title:'Old conversion'}),{headers:{'Content-Type':'application/json'}}));await pending;
   assert.equal(app.state.tracks.size,4);assert.equal(app.converter.job,null);assert.equal(app.converter.status.hasFile,false);assert.ok(service.calls.some(([,method])=>method==='DELETE'));assert.ok(!service.calls.some(([url])=>url.includes('/download/')));
 });
+// A converter with a three-video playlist. Each video gets its own job and distinct audio; options make one fail,
+// one lose its connection once, or one arrive as original-quality M4A.
+function playlistService({fail=new Set(),flaky=new Set(),m4a=new Set()}={}){
+  const calls=[],jobs=new Map(),videos=['aaaaaaaaaaa','bbbbbbbbbbb','ccccccccccc'];let count=0;
+  const json=value=>new Response(JSON.stringify(value),{headers:{'Content-Type':'application/json'}});
+  const audio=video=>m4a.has(video)?new Uint8Array([0,0,0,24,...new TextEncoder().encode('ftypM4A '+video)]):new TextEncoder().encode('ID3'+video);
+  return {calls,fetch:async(url,options)=>{
+    calls.push([url,options.method]);
+    if(url.endsWith('/health'))return json({service:'squidify-converter',api_version:1,ready:true,features:['original-audio','playlists']});
+    if(url.endsWith('/api/playlist'))return json({title:'Road trip',entries:[...videos.map((id,i)=>({id,title:`Video ${i+1}`})),{id:'UCthisIsAChannelNotAVideo',title:'Channel'}],unavailable:1,truncated:false});
+    if(url.endsWith('/convert')){const id=String(++count).padStart(48,'0');jobs.set(id,new URL(JSON.parse(options.body).url).searchParams.get('v'));return json({job_id:id});}
+    const video=jobs.get(url.match(/[0-9a-f]{48}/)?.[0]);
+    if(url.includes('/download/')){if(flaky.delete(video))throw new TypeError('Disconnected');return new Response(audio(video),{headers:{'Content-Type':m4a.has(video)?'audio/mp4':'audio/mpeg'}});}
+    if(url.endsWith('/complete'))return json({status:'completed'});
+    if(options.method==='DELETE')return json({status:'cancelled'});
+    return fail.has(video)?json({status:'failed',error:'This video is private.'}):json({status:'ready',title:`Video ${videos.indexOf(video)+1}`});
+  }};
+}
+const ROAD_TRIP='https://www.youtube.com/playlist?list=PLx0sYbCqOb8TBPRdmBHs5Iftvv9TPboYG';
+const callsTo=(service,path)=>service.calls.filter(([url])=>url.endsWith(path)).length;
+test('playlist links are listed and confirmed, then convert one video at a time into the library and a matching playlist',async t=>{
+  const service=playlistService({fail:new Set(['bbbbbbbbbbb']),m4a:new Set(['ccccccccccc'])}),app=await mediaFixture(t,{fetch:service.fetch});
+  await app.converter.saveConnection('https://converter.example','a'.repeat(48));app.converter.setURL(ROAD_TRIP);
+  await app.converter.submit();
+  assert.equal(app.converter.status.phase,'choose');assert.equal(app.converter.offer.entries.length,3);assert.equal(app.converter.offer.unavailable,1);
+  assert.equal(callsTo(service,'/convert'),0,'listing a playlist never starts a conversion');
+  await app.converter.startBatch();
+  const {phase,message,summary}=app.converter.status;
+  assert.equal(phase,'saved');assert.match(message,/Playlist finished: 2 songs added, 1 could not be converted/);
+  const plain=value=>JSON.parse(JSON.stringify(value));// app objects come from the module graph's own realm
+  assert.deepEqual(plain(summary.failed),[{title:'Video 2',reason:'This video is private.'}]);
+  assert.equal(app.state.tracks.size,6);assert.equal(app.converter.batch,null);assert.equal(app.db.stores.settings.get('converterBatch').value,null);
+  const playlist=app.state.playlists.find(p=>p.name==='Road trip');
+  assert.deepEqual(plain(playlist.trackIds.map(id=>app.state.tracks.get(id).mime)),['audio/mpeg','audio/mp4'],'playlist order follows YouTube, including the M4A');
+  assert.deepEqual(plain(app.db.stores.playlists.get(playlist.id).trackIds),plain(playlist.trackIds));
+  assert.equal(callsTo(service,'/complete'),2);assert.equal(callsTo(service,'/convert'),3);
+});
+test('a playlist paused by a dropped connection resumes after reopening without converting finished videos again',async t=>{
+  const service=playlistService({flaky:new Set(['bbbbbbbbbbb'])}),app=await mediaFixture(t,{fetch:service.fetch});
+  await app.converter.saveConnection('https://converter.example','a'.repeat(48));app.converter.setURL(ROAD_TRIP);
+  await app.converter.submit();await app.converter.startBatch();
+  assert.equal(app.converter.status.phase,'error');assert.match(app.converter.status.message,/Playlist paused at 2 of 3/);
+  assert.equal(app.converter.batch.index,1);assert.ok(app.converter.job,'the interrupted video keeps its converted job');
+  const reopened=await harness(t,app.db,{fetch:service.fetch});
+  assert.equal(reopened.converter.status.phase,'paused');assert.equal(reopened.converter.batch.index,1);
+  await reopened.converter.actions['converter-resume']();
+  assert.equal(reopened.converter.status.phase,'saved');assert.equal(reopened.state.tracks.size,7);
+  assert.equal(callsTo(service,'/convert'),3,'each video is converted once');
+  assert.equal(reopened.state.playlists.find(p=>p.name==='Road trip').trackIds.length,3);
+});
+test('stopping a playlist keeps the songs and playlist made so far',async t=>{
+  const service=playlistService(),app=await mediaFixture(t,{fetch:service.fetch});
+  await app.converter.saveConnection('https://converter.example','a'.repeat(48));app.converter.setURL(ROAD_TRIP);await app.converter.submit();
+  const pending=app.converter.startBatch();
+  for(let i=0;i<400&&app.state.tracks.size<5;i++)await new Promise(resolve=>setTimeout(resolve,5));
+  await app.converter.cancel();await pending;
+  assert.equal(app.converter.batch,null);assert.equal(app.converter.status.phase,'idle');assert.match(app.converter.status.message,/stopped after 1 of 3.*playlist were kept/);
+  assert.equal(app.state.playlists.find(p=>p.name==='Road trip').trackIds.length,1);assert.equal(callsTo(service,'/convert'),1);
+  assert.equal(app.db.stores.settings.get('converterBatch').value,null);
+});
+test('a video opened from a playlist can be converted on its own, and Mix links convert only the video',async t=>{
+  const service=playlistService(),app=await mediaFixture(t,{fetch:service.fetch});
+  await app.converter.saveConnection('https://converter.example','a'.repeat(48));
+  app.converter.setURL('https://www.youtube.com/watch?v=ccccccccccc&list=PLx0sYbCqOb8TBPRdmBHs5Iftvv9TPboYG');await app.converter.submit();
+  assert.equal(app.converter.status.phase,'choose');assert.equal(app.converter.offer.video,'https://www.youtube.com/watch?v=ccccccccccc');
+  await app.converter.actions['converter-single']();
+  assert.equal(app.converter.status.phase,'saved');assert.equal(app.state.tracks.size,5);assert.ok(!app.state.playlists.some(p=>p.name==='Road trip'));
+  const listings=callsTo(service,'/api/playlist');
+  app.converter.setURL('https://www.youtube.com/watch?v=aaaaaaaaaaa&list=RDaaaaaaaaaaa');await app.converter.submit();
+  assert.equal(callsTo(service,'/api/playlist'),listings,'Mix links are never listed');assert.equal(app.state.tracks.size,6);
+});
 test('playlist mix entry replaces duplicate search; ordered rows support dragging and saves are atomic',async t=>{
   const app=await mediaFixture(t);await app.db.put('playlists',{id:'p',name:'Night mix',trackIds:['a','b','c'],mix:{version:1,clips:{a:{in:12}},transitions:{}}});
   app.state.playlists=await app.db.all('playlists');app.state.view='playlist';app.state.detail='p';app.render();
@@ -773,16 +844,16 @@ test('installed-update toast is shown once, only for the running ready release',
   await app.offline.announceInstalled('squidify-shell-v5',true);
   assert.equal(app.element('#toast').hidden,true);
   assert.equal(app.db.stores.settings.has('installedShellVersion'),false);
-  await Promise.all([app.offline.announceInstalled('squidify-shell-v37',true),app.offline.announceInstalled('squidify-shell-v37',true)]);
+  await Promise.all([app.offline.announceInstalled('squidify-shell-v38',true),app.offline.announceInstalled('squidify-shell-v38',true)]);
   assert.match(app.element('#toast').textContent,/Squidify updated/);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v37');
-  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v37',true);
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v38');
+  const reopened=await harness(t,app.db);await reopened.offline.announceInstalled('squidify-shell-v38',true);
   assert.equal(reopened.element('#toast').hidden,true);
 });
 test('a first install records its release without claiming an update',async t=>{
-  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v37',false);
+  const app=await harness(t);await app.offline.announceInstalled('squidify-shell-v38',false);
   assert.equal(app.element('#toast').hidden,true);
-  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v37');
+  assert.equal(app.db.stores.settings.get('installedShellVersion').value,'squidify-shell-v38');
 });
 
 
