@@ -95,7 +95,23 @@ For large libraries, import in smaller batches and watch available storage. Dupl
 
 ## Source and verification
 
-Static assets live in `dist`. Source is deployed from the Sites Git repository. Run `npm test` for pure playback/metadata, offline-shell and storage workflow tests. No build step or runtime dependencies are required.
+Static assets live in `dist` and are served as-is by Cloudflare (Workers static assets, no Worker script). There is no build step and no runtime dependency. Run `npm test` for pure playback/metadata, offline-shell and storage workflow tests, and `npm run test:e2e` for Chromium against `wrangler dev`: offline install, import and playback, offline relaunch, and no Content Security Policy violations. `npm run dev` serves the app at http://localhost:8787.
+
+`dist/_headers` sets the security headers, including the CSP. `connect-src` allows any HTTPS origin because the YouTube converter endpoint is user-configured. A feature that loads anything from a new kind of source (a worker, a `data:` font, a remote image) needs its directive added there, or it fails silently on the phone; the e2e run catches violations on the paths it exercises.
+
+## Deploy
+
+GitHub Actions deploys `main` to `https://squidify.<subdomain>.workers.dev` after CI passes. The Deploy workflow's `env: qa` input deploys the same commit to `squidify-qa`, a separate origin with its own offline shell and library, for trying a new shell on a phone without updating the installed app.
+
+First-time setup:
+
+1. Cloudflare → My Profile → API Tokens → Create Token → "Edit Cloudflare Workers", limited to the account. In GitHub → Settings → Secrets and variables → Actions, add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. Until both exist the Deploy workflow runs the tests and skips the deploy with a warning.
+2. Push to `main` or run the Deploy workflow.
+3. Open the workers.dev URL in Safari, then Share → Add to Home Screen.
+
+There is no sign-in and nothing private on the server: music, playlists and settings stay in the device's browser storage. Do not put Cloudflare Access in front of the site; an iOS Home Screen app cannot finish a sign-in on another domain, and the service worker rejects a sign-in page in place of a script.
+
+Browser storage belongs to one origin. Moving hosts (or between prod and QA) starts with an empty library: re-import the music and recreate playlists on the new origin. A self-hosted converter service must also allow the new origin in its CORS settings.
 
 For any release that changes cached assets, update `VERSION` in `dist/sw.js`. The worker activates only after every shell asset has been cached. Database schema is versioned independently.
 
